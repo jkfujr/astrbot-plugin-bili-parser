@@ -1,19 +1,114 @@
 import aiohttp
 import logging
 import re
-from typing import Dict, Any, Optional
+import asyncio
+import random
+from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger("astrbot_plugin_bili_parser")
 
 class BiliAPIClient:
-    def __init__(self, user_agent: str):
-        self.user_agent = user_agent
+    def __init__(self, config: Dict[str, Any]):
+        # 从 basic 配置中获取 user_agent，兼容旧配置
+        basic_config = config.get("basic", {})
+        self.user_agent = basic_config.get("user_agent", "Mozilla/5.0")
+        
+        self.cookie_config = config.get("cookie", {})
+        self.cookie_mode = self.cookie_config.get("mode", "none")
+        
+        # Cookie 管理器相关
+        self.cookie_pool: List[str] = []
+        self._refresh_task = None
+        self._running = False
+
+    async def start(self):
+        """启动 Cookie 管理任务"""
+        if self.cookie_mode == "manager":
+            self._running = True
+            await self._refresh_cookies()
+            self._refresh_task = asyncio.create_task(self._auto_refresh_loop())
+
+    async def stop(self):
+        """停止 Cookie 管理任务"""
+        self._running = False
+        if self._refresh_task:
+            self._refresh_task.cancel()
+            try:
+                await self._refresh_task
+            except asyncio.CancelledError:
+                pass
+
+    def _get_random_cookie(self) -> str:
+        """获取一个可用的 Cookie"""
+        if self.cookie_mode == "manual":
+            return self.cookie_config.get("manual_cookie", "")
+        elif self.cookie_mode == "manager":
+            if self.cookie_pool:
+                return random.choice(self.cookie_pool)
+        return ""
+
+    async def _update_cookies_from_manager(self):
+        """从 Cookie 管理器更新 Cookie 池"""
+        manager_url = self.cookie_config.get("manager_url")
+        if not manager_url:
+            logger.warning("Cookie manager URL not configured")
+            return
+
+        token = self.cookie_config.get("manager_token")
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        try:
+            # 确保 URL 格式正确
+            api_url = f"{manager_url.rstrip('/')}/cookies/"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(api_url, headers=headers) as resp:
+                    if resp.status == 200:
+                        cookies_data = await resp.json()
+                        valid_cookies = []
+                        for cookie_obj in cookies_data:
+                            managed = cookie_obj.get("managed", {})
+                            if managed.get("is_enabled") and managed.get("status") == "valid":
+                                header_string = managed.get("header_string")
+                                if header_string:
+                                    valid_cookies.append(header_string)
+                        
+                        self.cookie_pool = valid_cookies
+                        logger.info(f"Updated {len(valid_cookies)} cookies from manager")
+                    else:
+                        logger.error(f"Failed to fetch cookies from manager: HTTP {resp.status}")
+        except Exception as e:
+            logger.error(f"Error updating cookies from manager: {e}")
+
+    async def _refresh_cookies(self):
+        """执行刷新逻辑"""
+        await self._update_cookies_from_manager()
+
+    async def _auto_refresh_loop(self):
+        """自动刷新循环"""
+        while self._running:
+            try:
+                interval = self.cookie_config.get("update_interval", 30)
+                await asyncio.sleep(interval * 60)
+                await self._refresh_cookies()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in cookie refresh loop: {e}")
+                await asyncio.sleep(60)  # 出错后等待1分钟重试
 
     async def _get(self, url: str, host: str) -> Dict[str, Any]:
         headers = {
             "User-Agent": self.user_agent,
             "Host": host
         }
+        
+        # 添加 Cookie
+        cookie = self._get_random_cookie()
+        if cookie:
+            headers["Cookie"] = cookie
+
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers) as resp:

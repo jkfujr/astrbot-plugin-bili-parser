@@ -1,132 +1,217 @@
 {
-  "show_quote": {
-    "description": "引用/回复原消息",
-    "type": "bool",
-    "default": true
+  "basic": {
+    "type": "object",
+    "description": "基础设置",
+    "items": {
+      "show_quote": {
+        "description": "引用/回复原消息",
+        "type": "bool",
+        "default": true
+      },
+      "parse_limit": {
+        "description": "单对话多链接解析上限",
+        "type": "int",
+        "default": 3
+      },
+      "custom_delimiter": {
+        "description": "自定义分隔符。*当出现多链接时使用的分隔符*",
+        "type": "string",
+        "default": "------"
+      },
+      "user_agent": {
+        "description": "所有 API 请求所用的 User-Agent *（为空时，使用默认UA）*",
+        "type": "string",
+        "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+      }
+    }
   },
-  "parse_limit": {
-    "description": "单对话多链接解析上限",
-    "type": "int",
-    "default": 3
+  "cookie": {
+    "type": "object",
+    "description": "Cookie 设置 (用于获取更高清晰度视频信息或规避风控)",
+    "items": {
+      "mode": {
+        "type": "string",
+        "description": "Cookie 来源模式",
+        "options": [
+          "none",
+          "manual",
+          "manager"
+        ],
+        "default": "none"
+      },
+      "manual_cookie": {
+        "type": "string",
+        "description": "手动填写的 Cookie 字符串 (mode=manual 时生效)",
+        "default": ""
+      },
+      "manager_url": {
+        "type": "string",
+        "description": "Cookie 管理器 API 地址 (mode=manager 时生效，如 http://127.0.0.1:8080/api/v1)",
+        "default": ""
+      },
+      "manager_token": {
+        "type": "string",
+        "description": "Cookie 管理器 API Token (如果设置了)",
+        "default": ""
+      },
+      "update_interval": {
+        "type": "int",
+        "description": "从管理器更新 Cookie 的间隔 (分钟)",
+        "default": 30
+      }
+    }
   },
-  "custom_delimiter": {
-    "description": "自定义分隔符。*当出现多链接时使用的分隔符*",
-    "type": "string",
-    "default": "------"
+  "video": {
+    "type": "object",
+    "description": "视频设置",
+    "items": {
+      "enable": {
+        "description": "启用视频链接解析",
+        "type": "bool",
+        "default": true
+      },
+      "full_url": {
+        "description": "需要完整链接 *（若关闭，则仅需 AV/BV 号即可解析）*",
+        "type": "bool",
+        "default": true
+      },
+      "ret_preset": {
+        "description": "返回的文本预设 (Jinja2)",
+        "type": "text",
+        "default": "{{ title }}\n<img src=\"{{ pic }}\" />\nUP主：{{ owner.name }}\n{{ desc | truncate(35) }}\n点赞：{{ stat.like | format_number }}\t\t投币：{{ stat.coin | format_number }}\n收藏：{{ stat.favorite | format_number }}\t\t转发：{{ stat.share | format_number }}\n观看：{{ stat.view | format_number }}\t\t弹幕：{{ stat.danmaku | format_number }}\nhttps://www.bilibili.com/video/{{ bvid }}"
+      }
+    }
   },
-  "use_puppeteer": {
-    "description": "所有 API 请求使用 Puppeteer 完成 *（可避免遭到风控，延迟约4秒/链接）* (需额外配置)",
-    "type": "bool",
-    "default": false
+  "live": {
+    "type": "object",
+    "description": "直播设置",
+    "items": {
+      "enable": {
+        "description": "启用直播链接解析",
+        "type": "bool",
+        "default": true
+      },
+      "ret_preset": {
+        "description": "返回的文本预设 (Jinja2)",
+        "type": "text",
+        "default": "[{{ live_status | format_live_status }}]{{ title }}\n<img src=\"{{ user_cover }}\" />\n{{ description }}\n观看：{{ online | format_number }}\t\t关注：{{ attention | format_number }}\nhttps://live.bilibili.com/{{ room_id }}"
+      }
+    }
   },
-  "user_agent": {
-    "description": "所有 API 请求所用的 User-Agent *（为空时，使用默认UA）*",
-    "type": "string",
-    "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+  "bangumi": {
+    "type": "object",
+    "description": "番剧集设置",
+    "items": {
+      "enable": {
+        "description": "启用番剧链接解析",
+        "type": "bool",
+        "default": true
+      },
+      "full_url": {
+        "description": "需要完整链接 *（若关闭，则仅需 EP/SS/MD 号即可解析）*",
+        "type": "bool",
+        "default": true
+      },
+      "ret_preset": {
+        "description": "返回的番剧集文本预设 (Jinja2)",
+        "type": "text",
+        "default": "{{ season_title }}（{{ rating.score }}分）\n<img src=\"{{ cover }}\" />\n{{ evaluate | truncate(35) }}\n点赞：{{ stat.likes | format_number }}\t\t投币：{{ stat.coins | format_number }}\n追番：{{ stat.favorites | format_number }}\t\t转发：{{ stat.share | format_number }}\n播放：{{ stat.views | format_number }}\t\t弹幕：{{ stat.danmakus | format_number }}\nhttps://www.bilibili.com/bangumi/media/md{{ media_id }}"
+      },
+      "episode_ret_preset": {
+        "description": "返回的具体集文本预设 (Jinja2)",
+        "type": "text",
+        "default": "{{ season_title }}（{{ rating.score }}分）\n<img src=\"{{ get_current_episode('cover') }}\" />\n第 {{ get_current_episode('title') }} 话 - {{ get_current_episode('long_title') }}\n{{ evaluate | truncate(35) }}\n点赞：{{ stat.likes | format_number }}\t\t投币：{{ stat.coins | format_number }}\n追番：{{ stat.favorites | format_number }}\t\t转发：{{ stat.share | format_number }}\n播放：{{ stat.views | format_number }}\t\t弹幕：{{ stat.danmakus | format_number }}\nhttps://www.bilibili.com/bangumi/play/ep{{ get_current_episode('ep_id') }}"
+      }
+    }
   },
-  "b_video_enable": {
-    "description": "启用视频链接解析",
-    "type": "bool",
-    "default": true
+  "space": {
+    "type": "object",
+    "description": "空间设置",
+    "items": {
+      "enable": {
+        "description": "启用空间链接解析",
+        "type": "bool",
+        "default": true
+      },
+      "ret_preset": {
+        "description": "返回的文本预设 (Jinja2)",
+        "type": "text",
+        "default": "{{ items[0].modules.module_author.name }} 的个人空间\n<img src=\"{{ items[0].modules.module_author.face }}\" />\nhttps://space.bilibili.com/{{ items[0].modules.module_author.mid }}"
+      }
+    }
   },
-  "b_video_full_url": {
-    "description": "需要完整链接 *（若关闭，则仅需 AV/BV 号即可解析）*",
-    "type": "bool",
-    "default": true
+  "opus": {
+    "type": "object",
+    "description": "动态设置",
+    "items": {
+      "enable": {
+        "description": "启用动态链接解析",
+        "type": "bool",
+        "default": true
+      },
+      "ret_preset": {
+        "description": "返回的文本预设 (Jinja2)",
+        "type": "text",
+        "default": "{{ item.modules.module_author.name }}的动态\n<img src=\"{{ item.modules.module_author.face }}\" />\n{% if item.modules.module_dynamic.desc.text %}\n  {{ item.modules.module_dynamic.desc.text }}\n{% elif item.modules.module_dynamic.major.article.title %}\n  {{ item.modules.module_dynamic.major.article.title }}\n{% endif %}\n\n转发：{{ item.modules.module_stat.forward.count | format_number }} | 评论：{{ item.modules.module_stat.comment.count | format_number }} | 点赞：{{ item.modules.module_stat.like.count | format_number }}\nhttps://www.bilibili.com/opus/{{ item.id_str }}"
+      }
+    }
   },
-  "b_video_ret_preset": {
-    "description": "返回的文本预设 (Jinja2)",
-    "type": "text",
-    "default": "{{ title }}\n<img src=\"{{ pic }}\" />\nUP主：{{ owner.name }}\n{{ desc | truncate(35) }}\n点赞：{{ stat.like | format_number }}\t\t投币：{{ stat.coin | format_number }}\n收藏：{{ stat.favorite | format_number }}\t\t转发：{{ stat.share | format_number }}\n观看：{{ stat.view | format_number }}\t\t弹幕：{{ stat.danmaku | format_number }}\nhttps://www.bilibili.com/video/{{ bvid }}"
+  "article": {
+    "type": "object",
+    "description": "专栏设置",
+    "items": {
+      "enable": {
+        "description": "启用专栏链接解析",
+        "type": "bool",
+        "default": true
+      },
+      "full_url": {
+        "description": "需要完整链接 *（若关闭，则仅需 CV 号即可解析）*",
+        "type": "bool",
+        "default": true
+      },
+      "ret_preset": {
+        "description": "返回的文本预设 (Jinja2)",
+        "type": "text",
+        "default": "{{ title }}\n<img src=\"{{ image_urls[0] }}\" />\nUP主：{{ author_name }}\n点赞：{{ stats.like | format_number }}\t\t投币：{{ stats.coin | format_number }}\n阅读：{{ stats.view | format_number }} | 收藏：{{ stats.favorite | format_number }} | 转发：{{ stats.share | format_number }}\nhttps://www.bilibili.com/read/cv{{ get_article_id() }}"
+      }
+    }
   },
-  "b_live_enable": {
-    "description": "启用直播链接解析",
-    "type": "bool",
-    "default": true
+  "audio": {
+    "type": "object",
+    "description": "音乐设置",
+    "items": {
+      "enable": {
+        "description": "启用音乐链接解析",
+        "type": "bool",
+        "default": true
+      },
+      "full_url": {
+        "description": "需要完整链接 *（若关闭，则仅需 AU 号即可解析）*",
+        "type": "bool",
+        "default": true
+      },
+      "ret_preset": {
+        "description": "返回的单曲文本预设 (Jinja2)",
+        "type": "text",
+        "default": "{{ title }}\n<img src=\"{{ cover }}\" />\nUP主：{{ uname }}\t\t歌手：{{ author }}\n播放：{{ statistic.play | format_number }}\t\t投币：{{ statistic.coin_num | format_number }}\n收藏：{{ statistic.collect | format_number }}\t\t转发：{{ statistic.share | format_number }}\nhttps://www.bilibili.com/audio/au{{ id }}"
+      },
+      "menu_ret_preset": {
+        "description": "返回的歌单文本预设 (Jinja2)",
+        "type": "text",
+        "default": "{{ title }}\n<img src=\"{{ cover }}\" />\nUP主：{{ uname }}\n{{ intro }}\n播放：{{ statistic.play | format_number }} | 收藏：{{ statistic.collect | format_number }} | 转发：{{ statistic.share | format_number }}\nhttps://www.bilibili.com/audio/am{{ menuId }}"
+      }
+    }
   },
-  "b_live_ret_preset": {
-    "description": "返回的文本预设 (Jinja2)",
-    "type": "text",
-    "default": "[{{ live_status | format_live_status }}]{{ title }}\n<img src=\"{{ user_cover }}\" />\n{{ description }}\n观看：{{ online | format_number }}\t\t关注：{{ attention | format_number }}\nhttps://live.bilibili.com/{{ room_id }}"
-  },
-  "b_bangumi_enable": {
-    "description": "启用番剧链接解析",
-    "type": "bool",
-    "default": true
-  },
-  "b_bangumi_full_url": {
-    "description": "需要完整链接 *（若关闭，则仅需 EP/SS/MD 号即可解析）*",
-    "type": "bool",
-    "default": true
-  },
-  "b_bangumi_ret_preset": {
-    "description": "返回的番剧集文本预设 (Jinja2)",
-    "type": "text",
-    "default": "{{ season_title }}（{{ rating.score }}分）\n<img src=\"{{ cover }}\" />\n{{ evaluate | truncate(35) }}\n点赞：{{ stat.likes | format_number }}\t\t投币：{{ stat.coins | format_number }}\n追番：{{ stat.favorites | format_number }}\t\t转发：{{ stat.share | format_number }}\n播放：{{ stat.views | format_number }}\t\t弹幕：{{ stat.danmakus | format_number }}\nhttps://www.bilibili.com/bangumi/media/md{{ media_id }}"
-  },
-  "b_episode_ret_preset": {
-    "description": "返回的具体集文本预设 (Jinja2)",
-    "type": "text",
-    "default": "{{ season_title }}（{{ rating.score }}分）\n<img src=\"{{ get_current_episode('cover') }}\" />\n第 {{ get_current_episode('title') }} 话 - {{ get_current_episode('long_title') }}\n{{ evaluate | truncate(35) }}\n点赞：{{ stat.likes | format_number }}\t\t投币：{{ stat.coins | format_number }}\n追番：{{ stat.favorites | format_number }}\t\t转发：{{ stat.share | format_number }}\n播放：{{ stat.views | format_number }}\t\t弹幕：{{ stat.danmakus | format_number }}\nhttps://www.bilibili.com/bangumi/play/ep{{ get_current_episode('ep_id') }}"
-  },
-  "b_space_enable": {
-    "description": "启用空间链接解析",
-    "type": "bool",
-    "default": true
-  },
-  "b_space_ret_preset": {
-    "description": "返回的文本预设 (Jinja2)",
-    "type": "text",
-    "default": "{{ items[0].modules.module_author.name }} 的个人空间\n<img src=\"{{ items[0].modules.module_author.face }}\" />\nhttps://space.bilibili.com/{{ items[0].modules.module_author.mid }}"
-  },
-  "b_opus_enable": {
-    "description": "启用动态链接解析",
-    "type": "bool",
-    "default": true
-  },
-  "b_opus_ret_preset": {
-    "description": "返回的文本预设 (Jinja2)",
-    "type": "text",
-    "default": "{{ item.modules.module_author.name }}的动态\n<img src=\"{{ item.modules.module_author.face }}\" />\n{% if item.modules.module_dynamic.desc.text %}\n  {{ item.modules.module_dynamic.desc.text }}\n{% elif item.modules.module_dynamic.major.article.title %}\n  {{ item.modules.module_dynamic.major.article.title }}\n{% endif %}\n\n转发：{{ item.modules.module_stat.forward.count | format_number }} | 评论：{{ item.modules.module_stat.comment.count | format_number }} | 点赞：{{ item.modules.module_stat.like.count | format_number }}\nhttps://www.bilibili.com/opus/{{ item.id_str }}"
-  },
-  "b_article_enable": {
-    "description": "启用专栏链接解析",
-    "type": "bool",
-    "default": true
-  },
-  "b_article_full_url": {
-    "description": "需要完整链接 *（若关闭，则仅需 CV 号即可解析）*",
-    "type": "bool",
-    "default": true
-  },
-  "b_article_ret_preset": {
-    "description": "返回的文本预设 (Jinja2)",
-    "type": "text",
-    "default": "{{ title }}\n<img src=\"{{ image_urls[0] }}\" />\nUP主：{{ author_name }}\n点赞：{{ stats.like | format_number }}\t\t投币：{{ stats.coin | format_number }}\n阅读：{{ stats.view | format_number }} | 收藏：{{ stats.favorite | format_number }} | 转发：{{ stats.share | format_number }}\nhttps://www.bilibili.com/read/cv{{ get_article_id() }}"
-  },
-  "b_audio_enable": {
-    "description": "启用音乐链接解析",
-    "type": "bool",
-    "default": true
-  },
-  "b_audio_full_url": {
-    "description": "需要完整链接 *（若关闭，则仅需 AU 号即可解析）*",
-    "type": "bool",
-    "default": true
-  },
-  "b_audio_ret_preset": {
-    "description": "返回的单曲文本预设 (Jinja2)",
-    "type": "text",
-    "default": "{{ title }}\n<img src=\"{{ cover }}\" />\nUP主：{{ uname }}\t\t歌手：{{ author }}\n播放：{{ statistic.play | format_number }}\t\t投币：{{ statistic.coin_num | format_number }}\n收藏：{{ statistic.collect | format_number }}\t\t转发：{{ statistic.share | format_number }}\nhttps://www.bilibili.com/audio/au{{ id }}"
-  },
-  "b_audio_menu_ret_preset": {
-    "description": "返回的歌单文本预设 (Jinja2)",
-    "type": "text",
-    "default": "{{ title }}\n<img src=\"{{ cover }}\" />\nUP主：{{ uname }}\n{{ intro }}\n播放：{{ statistic.play | format_number }} | 收藏：{{ statistic.collect | format_number }} | 转发：{{ statistic.share | format_number }}\nhttps://www.bilibili.com/audio/am{{ menuId }}"
-  },
-  "b_short_enable": {
-    "description": "启用短链接解析",
-    "type": "bool",
-    "default": true
+  "short_link": {
+    "type": "object",
+    "description": "短链接设置",
+    "items": {
+      "enable": {
+        "description": "启用短链接解析",
+        "type": "bool",
+        "default": true
+      }
+    }
   }
 }

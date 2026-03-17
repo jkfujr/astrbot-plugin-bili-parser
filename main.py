@@ -11,27 +11,19 @@ from .parser import BiliLinkParser
 from .api import BiliAPIClient
 from .utils import format_number, format_live_status
 
-import os
-import yaml
-
-# 读取 metadata.yaml 中的版本号
-def get_plugin_version():
-    try:
-        yaml_path = os.path.join(os.path.dirname(__file__), "metadata.yaml")
-        with open(yaml_path, "r", encoding="utf-8") as f:
-            metadata = yaml.safe_load(f)
-            return metadata.get("version", "1.0.0")
-    except Exception:
-        return "1.0.0"
-
-@register("astrbot_plugin_bili_parser", "BiliParser", "Bilibili Link Parser Plugin", get_plugin_version(), "https://github.com/jkfujr/astrbot_plugin_bili_parser")
+@register("astrbot_plugin_bili_parser", "BiliParser", "Bilibili Link Parser Plugin", "0.0.2", "https://github.com/jkfujr/astrbot_plugin_bili_parser")
 class BiliParser(Star):
     def __init__(self, context: Context, config: Dict[str, Any]):
         super().__init__(context)
         self.config = config
         
         # 初始化 API Client
-        self.api_client = BiliAPIClient(config.get("user_agent", "Mozilla/5.0"))
+        self.api_client = BiliAPIClient(config)
+        
+        # 启动 Cookie 管理任务
+        if self.config.get("cookie", {}).get("mode") == "manager":
+            import asyncio
+            asyncio.create_task(self.api_client.start())
         
         # 初始化解析器
         self.parser = BiliLinkParser(config)
@@ -69,6 +61,10 @@ class BiliParser(Star):
             "AudioMenu": "b_audio_menu_ret_preset",
         }
 
+    async def terminate(self):
+        """插件卸载时调用"""
+        await self.api_client.stop()
+
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
         message_str = event.message_str
@@ -81,12 +77,12 @@ class BiliParser(Star):
             return
             
         # 解析限制
-        limit = self.config.get("parse_limit", 3)
+        limit = self.config.get("basic", {}).get("parse_limit", 3)
         if len(links) > limit:
             links = links[:limit]
             
         # 解析短链接
-        if self.config.get("b_short_enable", True):
+        if self.config.get("short_link", {}).get("enable", True):
             links = await self.parser.resolve_short_links(links, self.api_client)
             
         results = []
@@ -146,7 +142,7 @@ class BiliParser(Star):
                 
         # 组合最终回复并发送
         if results:
-            delimiter = self.config.get("custom_delimiter", "\n------\n")
+            delimiter = self.config.get("basic", {}).get("custom_delimiter", "\n------\n")
             reply_text = delimiter.join(results)
             
             # 解析 <img> 标签并构建 MessageChain
