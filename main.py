@@ -1,6 +1,7 @@
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
+import astrbot.api.message_components as Comp
 
 import re
 import jinja2
@@ -133,5 +134,26 @@ class BiliParser(Star):
         # 组合最终回复并发送
         if results:
             delimiter = self.config.get("custom_delimiter", "\n------\n")
-            reply = delimiter.join(results)
-            yield event.plain_result(reply)
+            reply_text = delimiter.join(results)
+            
+            # 解析 <img> 标签并构建 MessageChain
+            chain = []
+            parts = re.split(r'(<img src="[^"]+" />)', reply_text)
+            for part in parts:
+                if not part:
+                    continue
+                img_match = re.match(r'<img src="([^"]+)" />', part)
+                if img_match:
+                    img_url = img_match.group(1)
+                    # 确保图片 URL 包含协议
+                    if img_url.startswith('//'):
+                        img_url = 'http:' + img_url
+                    chain.append(Comp.Image.fromURL(img_url))
+                else:
+                    # 清理多余的换行符，如果段落为空则不添加
+                    text_part = part.strip('\n')
+                    if text_part:
+                        chain.append(Comp.Plain(text_part + '\n'))
+
+            if chain:
+                yield event.chain_result(chain)
