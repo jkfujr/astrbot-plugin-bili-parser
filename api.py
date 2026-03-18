@@ -199,6 +199,10 @@ class BiliAPIClient:
         web_url = f"https://www.bilibili.com/opus/{id_str}"
         try:
             headers = {"User-Agent": self.user_agent}
+            cookie = self._get_random_cookie()
+            if cookie:
+                headers["Cookie"] = cookie
+                
             if not self._session:
                 self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
             
@@ -206,7 +210,12 @@ class BiliAPIClient:
                 if resp.status == 200:
                     html = await resp.text()
                     import re, json
-                    match = re.search(r'window\.__INITIAL_STATE__=({.*?});\(function\(\)', html)
+                    # 使用更为宽泛的正则表达式匹配 __INITIAL_STATE__，避开大括号与 script 特性干扰
+                    match = re.search(r'window\.__INITIAL_STATE__\s*=\s*({.*});\s*(?:</script>|\(function)', html)
+                    # 备用宽松匹配
+                    if not match:
+                        match = re.search(r'window\.__INITIAL_STATE__\s*=\s*({.*?});', html)
+                        
                     if match:
                         state_data = json.loads(match.group(1))
                         detail = state_data.get('detail', {})
@@ -261,6 +270,10 @@ class BiliAPIClient:
                         
                         # 兼容原模板：如果从 INITIAL_STATE 获取到了数据，伪装成 code=0 的合法返回
                         return {"code": 0, "message": "0", "data": {"item": mock_item}}
+                    else:
+                        logger.warning(f"[BiliParser] 网页解析未能提取到 INITIAL_STATE 数据！")
+                else:
+                    logger.warning(f"[BiliParser] 网页获取异常，状态码: {resp.status}")
         except Exception as e:
             logger.error(f"[BiliParser] 网页解析异常，准备降级尝试 API 请求: {e}")
             
