@@ -4,6 +4,12 @@
     "description": "基础设置",
     "hint": "插件基础行为配置，包括解析数量限制、多结果分隔符和请求 UA",
     "items": {
+      "debug_mode": {
+        "description": "调试模式",
+        "hint": "开启后将在日志中输出详细的消息内容、链接提取结果、API 响应码等调试信息，用于排查解析问题",
+        "type": "bool",
+        "default": false
+      },
       "show_quote": {
         "description": "引用原消息",
         "hint": "解析结果是否引用/回复触发消息",

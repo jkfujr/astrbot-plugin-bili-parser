@@ -83,8 +83,20 @@ class BiliParser(Star):
         if not message_str:
             return
 
+        debug = self.config.get("basic", {}).get("debug_mode", False)
+        if debug:
+            logger.info(f"[BiliParser][DEBUG] 收到消息: {repr(message_str[:200])}")
+
         # 提取链接
-        links = self.parser.extract_links(message_str)
+        try:
+            links = self.parser.extract_links(message_str)
+        except Exception as e:
+            logger.error(f"[BiliParser] extract_links 异常: {e}")
+            return
+
+        if debug:
+            logger.info(f"[BiliParser][DEBUG] 提取到链接: {links}")
+
         if not links:
             return
             
@@ -96,6 +108,8 @@ class BiliParser(Star):
         # 解析短链接
         if self.config.get("short_link", {}).get("enable", True):
             links = await self.parser.resolve_short_links(links, self.api_client)
+            if debug:
+                logger.info(f"[BiliParser][DEBUG] 短链解析后: {links}")
             
         results = []
         for link in links:
@@ -104,12 +118,16 @@ class BiliParser(Star):
                 continue
                 
             try:
+                if debug:
+                    logger.info(f"[BiliParser][DEBUG] 请求 {link.type} id={link.id}")
                 # 获取数据
                 data = await fetch_func(link.id)
+                if debug:
+                    logger.info(f"[BiliParser][DEBUG] {link.type} {link.id} 响应 code={data.get('code') if data else None}")
                 if not data or data.get('code') != 0:
                     code = data.get('code') if data else None
                     msg = data.get('message', '未知错误') if data else '请求失败'
-                    logger.warning(f"Failed to fetch {link.type} {link.id}: code={code}, msg={msg}")
+                    logger.warning(f"[BiliParser] fetch {link.type} {link.id} 失败: code={code}, msg={msg}")
                     # 未登录时给出明确提示
                     if code == -101:
                         results.append(f"[解析失败] {link.type} 需要登录 Cookie 才能访问，请在插件配置中设置 Cookie。")
@@ -120,11 +138,13 @@ class BiliParser(Star):
                 # 获取对应模板配置路径
                 template_path = self.template_keys.get(link.type)
                 if not template_path:
+                    logger.warning(f"[BiliParser] 未找到 {link.type} 的模板路径映射")
                     continue
                 
                 section, key = template_path
                 template_str = self.config.get(section, {}).get(key)
                 if not template_str:
+                    logger.warning(f"[BiliParser] 配置中未找到 {section}.{key} 模板，请检查插件配置")
                     continue
 
                 # 使用缓存的模板或重新编译（以路径元组为缓存键）
@@ -165,7 +185,8 @@ class BiliParser(Star):
                 results.append(rendered)
                 
             except Exception as e:
-                logger.error(f"Error processing {link.type} {link.id}: {e}")
+                import traceback
+                logger.error(f"[BiliParser] 处理 {link.type} {link.id} 时异常: {e}\n{traceback.format_exc()}")
                 
         # 组合最终回复并发送
         if results:
