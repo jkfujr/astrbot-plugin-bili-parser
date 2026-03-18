@@ -108,11 +108,19 @@ class BiliLinkParser:
         def find_urls(obj):
             if isinstance(obj, dict):
                 for k, v in obj.items():
-                    if isinstance(v, str) and (
-                        k in ("qqdocurl", "url", "jumpUrl") or
-                        re.match(r'^https?://(b23\.tv|www\.bilibili\.com|bili22\.cn)', v)
-                    ):
-                        extracted_urls.append(v)
+                    if isinstance(v, str):
+                        if k in ("qqdocurl", "url", "jumpUrl") or re.match(r'^https?://(b23\.tv|www\.bilibili\.com|bili22\.cn)', v):
+                            extracted_urls.append(v)
+                        else:
+                            # Napcat/OneBot 给到的 JSON 内可能嵌套被直接 Stringify 的 JSON 文本（如 data="{\"ver...}"）
+                            import json
+                            v_stripped = v.strip()
+                            if v_stripped.startswith('{') or v_stripped.startswith('['):
+                                try:
+                                    parsed_v = json.loads(v_stripped)
+                                    find_urls(parsed_v)
+                                except Exception:
+                                    pass
                     else:
                         find_urls(v)
             elif isinstance(obj, list):
