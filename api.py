@@ -270,6 +270,8 @@ class BiliAPIClient:
                         
                         # 兼容原模板：如果从 INITIAL_STATE 获取到了数据，伪装成 code=0 的合法返回
                         return {"code": 0, "message": "0", "data": {"item": mock_item}}
+                    elif "验证码" in html and "bilibili" in html:
+                        logger.warning(f"[BiliParser] 当前服务器 IP 可能已被 B 站风控拦截，访问网页返回了人机验证（验证码）页面。")
                     else:
                         logger.warning(f"[BiliParser] 网页解析未能提取到 INITIAL_STATE 数据！页面前2000字符如下:\n{html[:2000]}")
                 else:
@@ -278,10 +280,47 @@ class BiliAPIClient:
             logger.error(f"[BiliParser] 网页解析异常，准备降级尝试 API 请求: {e}")
             
         # 网页解析失败或未匹配，降级回退请求官方 API
-        logger.info(f"[BiliParser] 降级请求官方 API: {id_str}")
+        logger.info(f"[BiliParser] 降级请求官方 Polymer API: {id_str}")
         url = f"https://api.bilibili.com/x/polymer/web-dynamic/v1/detail?id={id_str}"
         resp_data = await self._get(url, "api.bilibili.com")
         
+        # 检查 Polymer API 返回结构是否健康，如果没有获取到正确的数据 (-352 风控)
+        if resp_data.get('code') != 0 or not resp_data.get('data', {}).get('item', {}):
+            if resp_data.get('code') == -352:
+                logger.warning("[BiliParser] 新版 Polymer API 提示 -352，通常意味着没有提供有效的登录 Cookie 或是被风控拦截。")
+            
+            logger.info(f"[BiliParser] 尝试最后降级请求历史 VC API: {id_str}")
+            old_url = f"https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr/get_dynamic_detail?dynamic_id={id_str}"
+            try:
+                old_resp = await self._get(old_url, "api.vc.bilibili.com")
+                if old_resp.get('code') == 0:
+                    card_str = old_resp.get('data', {}).get('card', {}).get('card', '{}')
+                    import json
+                    card_data = json.loads(card_str)
+                    
+                    # 使用与上面通用一套的伪造 item 方法封装 VC 老旧 API 数据
+                    old_item = card_data.get('item', {})
+                    mock_item = {"id_str": id_str, "modules": {
+                        "module_author": {}, "module_dynamic": {"major": {"type": "MAJOR_TYPE_NONE", "draw": {"items": []}}, "desc": {"text": old_item.get("description", "")}}, "module_stat": {"comment": {"count": old_item.get("reply", 0)}, "forward": {"count": 0}, "like": {"count": 0}}
+                    }}
+                    
+                    # 旧 API 头像名字处理
+                    userinfo = old_resp.get('data', {}).get('card', {}).get('desc', {}).get('user_profile', {}).get('info', {})
+                    mock_item["modules"]["module_author"]["name"] = userinfo.get("uname", "")
+                    mock_item["modules"]["module_author"]["face"] = userinfo.get("face", "")
+                    
+                    # 尝试读取旧的图片流
+                    pictures = old_item.get("pictures", [])
+                    if pictures:
+                        mock_item["modules"]["module_dynamic"]["major"]["type"] = "MAJOR_TYPE_DRAW"
+                        for pic in pictures:
+                            mock_item["modules"]["module_dynamic"]["major"]["draw"]["items"].append({"src": pic.get("img_src", "")})
+                            
+                    logger.info("[BiliParser] 从历史动态 VC 接口中成功抢救到了图文数据。")
+                    return {"code": 0, "message": "0", "data": {"item": mock_item}}
+            except Exception as e:
+                logger.error(f"[BiliParser] 请求历史 VC API 失败: {e}")
+                
         return resp_data
 
     async def fetch_space(self, id_str: str) -> Dict[str, Any]:
