@@ -175,7 +175,7 @@
   "opus": {
     "type": "object",
     "description": "动态解析",
-    "hint": "控制 B 站动态（opus）链接的解析行为",
+    "hint": "控制 B 站动态（opus）链接的解析。注意：受 B 站风控影响，必须在上面的 Cookie 设置中配置有效的登录 Cookie 才能获取包含文字内容的完整动态数据，否则请求会被拒绝（-352）或只能获取简略数据。",
     "items": {
       "enable": {
         "description": "启用解析",
@@ -187,7 +187,7 @@
         "description": "回复模板",
         "hint": "使用 Jinja2 语法的回复内容模板，可引用 API 返回的字段变量",
         "type": "text",
-        "default": "{{ item.modules.module_author.name }}的动态\n<img src=\"{{ item.modules.module_author.face }}\" />\n{% if item.modules.module_dynamic.desc.text %}\n  {{ item.modules.module_dynamic.desc.text }}\n{% elif item.modules.module_dynamic.major.article.title %}\n  {{ item.modules.module_dynamic.major.article.title }}\n{% endif %}\n\n转发：{{ item.modules.module_stat.forward.count | format_number }} | 评论：{{ item.modules.module_stat.comment.count | format_number }} | 点赞：{{ item.modules.module_stat.like.count | format_number }}\nhttps://www.bilibili.com/opus/{{ item.id_str }}"
+        "default": "{{ item.modules.module_author.name }}的动态\n{% set desc = item.modules.module_dynamic.desc %}\n{% set major = item.modules.module_dynamic.major %}\n{% if desc and desc.text %}{{ desc.text }}\n{% endif %}\n{% if major.type == 'MAJOR_TYPE_DRAW' %}<img src=\"{{ major.draw.items[0].src }}\" />\n{% elif major.type == 'MAJOR_TYPE_ARTICLE' %}📄 {{ major.article.title }}\n<img src=\"{{ major.article.covers[0] }}\" />\n{% elif major.type == 'MAJOR_TYPE_ARCHIVE' %}🎬 {{ major.archive.title }}\n<img src=\"{{ major.archive.cover }}\" />\n{% endif %}\n转发：{{ item.modules.module_stat.forward.count | format_number }} | 评论：{{ item.modules.module_stat.comment.count | format_number }} | 点赞：{{ item.modules.module_stat.like.count | format_number }}\nhttps://www.bilibili.com/opus/{{ item.id_str }}"
       }
     }
   },

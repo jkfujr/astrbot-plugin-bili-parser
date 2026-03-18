@@ -31,8 +31,8 @@ class BiliParser(Star):
         # 初始化解析器
         self.parser = BiliLinkParser(config)
         
-        # 初始化 Jinja2 环境
-        self.env = jinja2.Environment()
+        # 初始化 Jinja2 环境，使用 ChainableUndefined 避免链式属性访问时抛出 UndefinedError
+        self.env = jinja2.Environment(undefined=jinja2.ChainableUndefined)
         self.env.filters['format_number'] = format_number
         self.env.filters['format_live_status'] = format_live_status
         

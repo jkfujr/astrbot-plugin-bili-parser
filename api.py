@@ -195,7 +195,84 @@ class BiliAPIClient:
     async def fetch_opus(self, id_str: str) -> Dict[str, Any]:
         """获取动态信息"""
         url = f"https://api.bilibili.com/x/polymer/web-dynamic/v1/detail?id={id_str}"
-        return await self._get(url, "api.bilibili.com")
+        resp_data = await self._get(url, "api.bilibili.com")
+        
+        # 如果 API 没报错，直接返回
+        if resp_data and resp_data.get('code') == 0:
+            return resp_data
+            
+        # 如果 API 报错（如 -352 风控），尝试直接请求网页获取 __INITIAL_STATE__
+        logger.info(f"[BiliParser] API 请求受限，尝试解析网页数据: {id_str}")
+        web_url = f"https://www.bilibili.com/opus/{id_str}"
+        try:
+            headers = {"User-Agent": self.user_agent}
+            if not self._session:
+                self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
+            
+            async with self._session.get(web_url, headers=headers) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    import re, json
+                    match = re.search(r'window\.__INITIAL_STATE__=({.*?});\(function\(\)', html)
+                    if match:
+                        state_data = json.loads(match.group(1))
+                        detail = state_data.get('detail', {})
+                        
+                        # 构建一个兼容 API `data.item` 的模拟结构
+                        mock_item = {"id_str": id_str, "modules": {
+                            "module_author": {}, "module_dynamic": {"major": {"type": "MAJOR_TYPE_DRAW", "draw": {"items": []}}, "desc": {"text": ""}}, "module_stat": {"comment": {"count": 0}, "forward": {"count": 0}, "like": {"count": 0}}
+                        }}
+                        
+                        modules = detail.get('modules', [])
+                        text_parts = []
+                        for mod in modules:
+                            mtype = mod.get('module_type')
+                            if mtype == 'MODULE_TYPE_AUTHOR':
+                                mock_item["modules"]["module_author"]["name"] = mod.get("module_author", {}).get("name", "")
+                                # 尝试从复杂的 layers 中提取头像 URL
+                                face_url = ""
+                                try:
+                                    avatar = mod.get("module_author", {}).get("avatar", {})
+                                    layers = avatar.get("fallback_layers", {}).get("layers", [])
+                                    if layers:
+                                        res_image = layers[0].get("resource", {}).get("res_image", {})
+                                        face_url = res_image.get("image_src", {}).get("remote", {}).get("url", "")
+                                        if not face_url:
+                                            # 有些在 avatar 下直接有面部 url，为了保险兜底
+                                            face_url = mod.get("module_author", {}).get("face", "")
+                                except Exception:
+                                    pass
+                                mock_item["modules"]["module_author"]["face"] = face_url or mod.get("module_author", {}).get("face", "")
+                            elif mtype == 'MODULE_TYPE_CONTENT':
+                                paras = mod.get('module_content', {}).get('paragraphs', [])
+                                for p in paras:
+                                    if 'text' in p:
+                                        for n in p['text'].get('nodes', []):
+                                            if 'word' in n and 'words' in n['word']:
+                                                text_parts.append(n['word']['words'])
+                                    if 'pic' in p:
+                                        pics = p['pic'].get('pics', [])
+                                        for pic in pics:
+                                            mock_item["modules"]["module_dynamic"]["major"]["draw"]["items"].append({"src": pic.get('url')})
+                            elif mtype == 'MODULE_TYPE_STAT':
+                                stat = mod.get('module_stat', {})
+                                mock_item["modules"]["module_stat"]["like"]["count"] = stat.get("like", {}).get("count", 0)
+                                mock_item["modules"]["module_stat"]["comment"]["count"] = stat.get("comment", {}).get("count", 0)
+                                mock_item["modules"]["module_stat"]["forward"]["count"] = stat.get("forward", {}).get("count", 0)
+                        
+                        mock_item["modules"]["module_dynamic"]["desc"]["text"] = "\n".join(text_parts)
+                        
+                        # 兼容无图情况，避免 major.draw.items[0] 数组越界
+                        if not mock_item["modules"]["module_dynamic"]["major"]["draw"]["items"]:
+                            mock_item["modules"]["module_dynamic"]["major"]["type"] = "MAJOR_TYPE_NONE"
+                        
+                        # 兼容原模板：如果从 INITIAL_STATE 获取到了数据，伪装成 code=0 的合法返回
+                        return {"code": 0, "message": "0", "data": {"item": mock_item}}
+        except Exception as e:
+            logger.error(f"[BiliParser] 解析网页 __INITIAL_STATE__ 失败: {e}")
+            
+        # 网页解析均失败则返回原 API 错误字典
+        return resp_data
 
     async def fetch_space(self, id_str: str) -> Dict[str, Any]:
         """获取空间信息"""
