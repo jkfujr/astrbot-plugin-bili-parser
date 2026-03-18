@@ -259,5 +259,18 @@
         "default": true
       }
     }
+  },
+  "json_card": {
+    "type": "object",
+    "description": "JSON/小程序卡片解析",
+    "hint": "控制第三方发卡、QQ小程序（包括哔哩哔哩APP分享卡片等）这类内部不包含明文链接的结构化消息解析",
+    "items": {
+      "enable": {
+        "description": "启用解析",
+        "hint": "是否对结构化卡片消息进行内部提取，找出并解析其隐藏的 B站 链接",
+        "type": "bool",
+        "default": true
+      }
+    }
   }
 }

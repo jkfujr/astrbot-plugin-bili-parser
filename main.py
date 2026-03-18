@@ -85,16 +85,35 @@ class BiliParser(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
         message_str = event.message_str
-        if not message_str:
+        
+        # 尝试从 message_obj.components 提取由于 QQ小程序/结构化消息 导致的 Json 卡片
+        extra_links = []
+        if self.config.get("json_card", {}).get("enable", True) and hasattr(event.message_obj, "components"):
+            for c in event.message_obj.components:
+                if c.__class__.__name__ == "Json" and hasattr(c, "data") and isinstance(c.data, dict):
+                    try:
+                        extra_links.extend(self.parser.extract_from_json(c.data))
+                    except Exception as e:
+                        logger.error(f"[BiliParser] extract_from_json 异常: {e}")
+
+        if not message_str and not extra_links:
             return
 
         debug = self.config.get("basic", {}).get("debug_mode", False)
         if debug:
-            logger.info(f"[BiliParser][DEBUG] 收到消息: {repr(message_str[:200])}")
+            logger.info(f"[BiliParser][DEBUG] 收到消息: {repr(message_str[:200]) if message_str else '<包含 JSON 卡片>'}")
 
         # 提取链接
         try:
-            links = self.parser.extract_links(message_str)
+            links = []
+            if message_str:
+                links.extend(self.parser.extract_links(message_str))
+            if extra_links:
+                links.extend(extra_links)
+            
+            # 统一去重
+            if links:
+                links = self.parser._deduplicate_links(links)
         except Exception as e:
             logger.error(f"[BiliParser] extract_links 异常: {e}")
             return

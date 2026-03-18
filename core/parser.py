@@ -101,6 +101,38 @@ class BiliLinkParser:
 
         return self._deduplicate_links(results)
 
+    def extract_from_json(self, json_data: dict) -> List[Link]:
+        """从 QQ 小程序等 JSON 卡片中提取 B站 链接"""
+        extracted_urls = []
+
+        def find_urls(obj):
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if isinstance(v, str) and (
+                        k in ("qqdocurl", "url", "jumpUrl") or
+                        re.match(r'^https?://(b23\.tv|www\.bilibili\.com|bili22\.cn)', v)
+                    ):
+                        extracted_urls.append(v)
+                    else:
+                        find_urls(v)
+            elif isinstance(obj, list):
+                for item in obj:
+                    find_urls(item)
+
+        find_urls(json_data)
+        
+        # 将提取到的 url 用普通的字符串提取合并
+        links = []
+        for url in extracted_urls:
+            
+            # 使用现有正则从 url 中提取出 Link 对象，注意这里我们跳过了自身内部的去重
+            sanitized_content = re.sub(r'<[^>]+>', '', url)
+            for item in self.patterns:
+                for match in item["pattern"].finditer(sanitized_content):
+                    links.append(Link(item["type"], match.group(1)))
+                    
+        return links
+
     async def resolve_short_links(self, links: List[Link], api_client) -> List[Link]:
         """将提取出来的短链接转换为真实链接并递归提取 (并发解析)"""
 
