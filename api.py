@@ -271,7 +271,7 @@ class BiliAPIClient:
                         # 兼容原模板：如果从 INITIAL_STATE 获取到了数据，伪装成 code=0 的合法返回
                         return {"code": 0, "message": "0", "data": {"item": mock_item}}
                     else:
-                        logger.warning(f"[BiliParser] 网页解析未能提取到 INITIAL_STATE 数据！")
+                        logger.warning(f"[BiliParser] 网页解析未能提取到 INITIAL_STATE 数据！页面前2000字符如下:\n{html[:2000]}")
                 else:
                     logger.warning(f"[BiliParser] 网页获取异常，状态码: {resp.status}")
         except Exception as e:
