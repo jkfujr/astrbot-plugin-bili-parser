@@ -90,25 +90,14 @@ class BiliParser(Star):
         extra_links = []
         debug = self.config.get("basic", {}).get("debug_mode", False)
         
-        if self.config.get("json_card", {}).get("enable", True) and hasattr(event.message_obj, "components"):
-            for c in event.message_obj.components:
-                if debug and c.__class__.__name__ == "Json":
-                    logger.info(f"[BiliParser][DEBUG] 探测到 Json 组件: type(c.data)={type(getattr(c, 'data', None))} data={repr(getattr(c, 'data', None))[:500]}")
-                if c.__class__.__name__ == "Json" and hasattr(c, "data"):
-                    # 不再坚持 dict 强校验，只要有 data 统统丢过去（如果它是 string 也可以在这边或者 extract 里包一下）
-                    c_data = c.data
-                    if isinstance(c_data, str):
-                        try:
-                            import json
-                            c_data = json.loads(c_data)
-                        except Exception as e:
-                            logger.error(f"[BiliParser] 尝试将 Json 里的 string 转为 dict 失败: {e}")
-                            
-                    if isinstance(c_data, dict):
-                        try:
-                            extra_links.extend(self.parser.extract_from_json(c_data))
-                        except Exception as e:
-                            logger.error(f"[BiliParser] extract_from_json 异常: {e}")
+        if self.config.get("json_card", {}).get("enable", True) and hasattr(event.message_obj, "raw_message"):
+            try:
+                raw_message = event.message_obj.raw_message
+                if debug:
+                    logger.info(f"[BiliParser][DEBUG] json_card 开启，探测 raw_message，内容长度: {len(str(raw_message))}")
+                extra_links.extend(self.parser.extract_from_json(raw_message))
+            except Exception as e:
+                logger.error(f"[BiliParser] 从 raw_message 中提取 json 发生异常: {e}")
 
         if not message_str and not extra_links:
             return
