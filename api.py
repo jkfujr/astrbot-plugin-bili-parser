@@ -194,15 +194,8 @@ class BiliAPIClient:
 
     async def fetch_opus(self, id_str: str) -> Dict[str, Any]:
         """获取动态信息"""
-        url = f"https://api.bilibili.com/x/polymer/web-dynamic/v1/detail?id={id_str}"
-        resp_data = await self._get(url, "api.bilibili.com")
-        
-        # 如果 API 没报错，直接返回
-        if resp_data and resp_data.get('code') == 0:
-            return resp_data
-            
-        # 如果 API 报错（如 -352 风控），尝试直接请求网页获取 __INITIAL_STATE__
-        logger.info(f"[BiliParser] API 请求受限，尝试解析网页数据: {id_str}")
+        # 优先直接请求网页获取 __INITIAL_STATE__，因为新版动态 API v1/detail 会漏掉未登录状态下的纯文字等详情数据
+        logger.info(f"[BiliParser] 尝试解析网页数据: {id_str}")
         web_url = f"https://www.bilibili.com/opus/{id_str}"
         try:
             headers = {"User-Agent": self.user_agent}
@@ -269,9 +262,13 @@ class BiliAPIClient:
                         # 兼容原模板：如果从 INITIAL_STATE 获取到了数据，伪装成 code=0 的合法返回
                         return {"code": 0, "message": "0", "data": {"item": mock_item}}
         except Exception as e:
-            logger.error(f"[BiliParser] 解析网页 __INITIAL_STATE__ 失败: {e}")
+            logger.error(f"[BiliParser] 网页解析异常，准备降级尝试 API 请求: {e}")
             
-        # 网页解析均失败则返回原 API 错误字典
+        # 网页解析失败或未匹配，降级回退请求官方 API
+        logger.info(f"[BiliParser] 降级请求官方 API: {id_str}")
+        url = f"https://api.bilibili.com/x/polymer/web-dynamic/v1/detail?id={id_str}"
+        resp_data = await self._get(url, "api.bilibili.com")
+        
         return resp_data
 
     async def fetch_space(self, id_str: str) -> Dict[str, Any]:
