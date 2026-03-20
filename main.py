@@ -10,7 +10,7 @@ from typing import Dict, Any
 from .core import BiliAPIClient, CookieManager, BiliLinkParser
 from .utils import format_number, format_live_status
 
-@register("astrbot_plugin_bili_parser", "BiliParser", "Bilibili Link Parser Plugin", "0.0.2", "https://github.com/jkfujr/astrbot_plugin_bili_parser")
+@register("astrbot_plugin_bili_parser", "BiliParser", "Bilibili Link Parser Plugin", "0.0.3", "https://github.com/jkfujr/astrbot_plugin_bili_parser")
 class BiliParser(Star):
     def __init__(self, context: Context, config: Dict[str, Any]):
         super().__init__(context)
