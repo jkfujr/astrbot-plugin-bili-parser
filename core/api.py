@@ -6,6 +6,7 @@ B站 API 客户端
 
 from astrbot.api import logger
 import aiohttp
+from aiohttp_socks import ProxyConnector
 import hashlib
 import re
 import random
@@ -62,19 +63,38 @@ def _add_dm_params(params: dict) -> dict:
 class BiliAPIClient:
     """B站 API 客户端"""
 
-    def __init__(self, user_agent: str, cookie_manager: CookieManager):
+    def __init__(
+        self,
+        user_agent: str,
+        cookie_manager: CookieManager,
+        network_config: Dict[str, Any],
+    ):
         self._user_agent = user_agent
         self._cookie = cookie_manager
+        self._proxy_url = network_config.get("proxy_url", "").strip()
         self._session: Optional[aiohttp.ClientSession] = None
         # Wbi mixin key 缓存
         self._wbi_mixin_key: str = ""
         self._wbi_key_expire: float = 0
 
+    def _create_session(self) -> aiohttp.ClientSession:
+        """创建 HTTP 会话，按配置统一接入代理"""
+        kwargs = {"timeout": aiohttp.ClientTimeout(total=10)}
+        if self._proxy_url:
+            proxy_url = self._proxy_url
+            proxy_url_lower = proxy_url.lower()
+            if proxy_url_lower.startswith("socks5h://"):
+                proxy_url = "socks5://" + proxy_url[len("socks5h://"):]
+                kwargs["connector"] = ProxyConnector.from_url(proxy_url, rdns=True)
+            elif proxy_url_lower.startswith(("socks4://", "socks5://")):
+                kwargs["connector"] = ProxyConnector.from_url(proxy_url)
+            else:
+                kwargs["proxy"] = proxy_url
+        return aiohttp.ClientSession(**kwargs)
+
     async def start(self):
         """初始化 HTTP 会话"""
-        self._session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=10)
-        )
+        self._session = self._create_session()
 
     async def stop(self):
         """关闭 HTTP 会话"""
@@ -85,9 +105,7 @@ class BiliAPIClient:
     def _ensure_session(self):
         """确保 session 存在"""
         if not self._session:
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=10)
-            )
+            self._session = self._create_session()
 
     def _build_headers(self) -> dict:
         """构建通用请求头"""

@@ -78,6 +78,19 @@
       }
     }
   },
+  "network": {
+    "type": "object",
+    "description": "网络设置",
+    "hint": "配置 B站接口访问网络。代理仅作用于本插件发起的 B站相关请求，不影响 AstrBot、NapCat 或 Cookie 管理器。",
+    "items": {
+      "proxy_url": {
+        "description": "代理地址",
+        "hint": "留空为直连。支持 http://、https://、socks4://、socks5://、socks5h://，例如 socks5h://100.100.201.52:10808",
+        "type": "string",
+        "default": ""
+      }
+    }
+  },
   "video": {
     "type": "object",
     "description": "视频解析",

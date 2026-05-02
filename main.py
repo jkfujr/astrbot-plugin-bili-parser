@@ -10,6 +10,7 @@ from typing import Dict, Any
 from .core import BiliAPIClient, CookieManager, BiliLinkParser
 from .utils import format_number, format_live_status
 
+
 @register("astrbot_plugin_bili_parser", "BiliParser", "Bilibili Link Parser Plugin", "0.0.3", "https://github.com/jkfujr/astrbot_plugin_bili_parser")
 class BiliParser(Star):
     def __init__(self, context: Context, config: Dict[str, Any]):
@@ -22,8 +23,9 @@ class BiliParser(Star):
         
         # 初始化 API Client（注入 Cookie 管理器）
         basic_config = config.get("basic", {})
+        network_config = config.get("network", {})
         user_agent = basic_config.get("user_agent", "Mozilla/5.0")
-        self.api_client = BiliAPIClient(user_agent, self.cookie_manager)
+        self.api_client = BiliAPIClient(user_agent, self.cookie_manager, network_config)
         
         # 启动后台任务
         if cookie_config.get("mode") == "manager":
@@ -269,7 +271,7 @@ class BiliParser(Star):
                         img_url = 'https:' + img_url
                     elif img_url.startswith('http:'):
                         img_url = 'https' + img_url[4:]
-                        
+
                     chain.append(Comp.Image.fromURL(img_url))
                 else:
                     # 清理多余的换行符，如果段落为空则不添加
