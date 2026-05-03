@@ -31,6 +31,7 @@ class Link:
 class BiliLinkParser:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        self.max_json_depth = 10
         self._compile_regex()
 
     def _compile_regex(self):
@@ -105,30 +106,8 @@ class BiliLinkParser:
     def extract_from_json(self, json_data: dict) -> List[Link]:
         """从 QQ 小程序等 JSON 卡片中提取 B站 链接"""
         extracted_urls = []
+        self._find_urls_in_json(json_data, extracted_urls, 0)
 
-        def find_urls(obj):
-            if isinstance(obj, dict):
-                for k, v in obj.items():
-                    if isinstance(v, str):
-                        if k in ("qqdocurl", "url", "jumpUrl") or re.match(r'^https?://(b23\.tv|www\.bilibili\.com|bili22\.cn)', v):
-                            extracted_urls.append(v)
-                        else:
-                            # Napcat/OneBot 给到的 JSON 内可能嵌套被直接 Stringify 的 JSON 文本（如 data="{\"ver...}"）
-                            v_stripped = v.strip()
-                            if v_stripped.startswith('{') or v_stripped.startswith('['):
-                                try:
-                                    parsed_v = json.loads(v_stripped)
-                                    find_urls(parsed_v)
-                                except Exception:
-                                    pass
-                    else:
-                        find_urls(v)
-            elif isinstance(obj, list):
-                for item in obj:
-                    find_urls(item)
-
-        find_urls(json_data)
-        
         # 将提取到的 url 用普通的字符串提取合并
         links = []
         for url in extracted_urls:
@@ -140,6 +119,30 @@ class BiliLinkParser:
                     links.append(Link(item["type"], match.group(1)))
                     
         return links
+
+    def _find_urls_in_json(self, obj, extracted_urls: List[str], depth: int):
+        if depth > self.max_json_depth:
+            return
+
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if isinstance(v, str):
+                    if k in ("qqdocurl", "url", "jumpUrl") or re.match(r'^https?://(b23\.tv|www\.bilibili\.com|bili22\.cn)', v):
+                        extracted_urls.append(v)
+                    else:
+                        # Napcat/OneBot 给到的 JSON 内可能嵌套被直接 Stringify 的 JSON 文本（如 data="{\"ver...}"）
+                        v_stripped = v.strip()
+                        if v_stripped.startswith('{') or v_stripped.startswith('['):
+                            try:
+                                parsed_v = json.loads(v_stripped)
+                                self._find_urls_in_json(parsed_v, extracted_urls, depth + 1)
+                            except Exception:
+                                pass
+                else:
+                    self._find_urls_in_json(v, extracted_urls, depth + 1)
+        elif isinstance(obj, list):
+            for item in obj:
+                self._find_urls_in_json(item, extracted_urls, depth + 1)
 
     async def resolve_short_links(self, links: List[Link], api_client) -> List[Link]:
         """将提取出来的短链接转换为真实链接并递归提取 (并发解析)"""

@@ -132,7 +132,8 @@ class BiliAPIClient:
         try:
             async with self._session.get(nav_url, headers=self._build_headers()) as resp:
                 data = await resp.json()
-                wbi_img = data.get("data", {}).get("wbi_img", {})
+                data_dict = data.get("data") or {}
+                wbi_img = data_dict.get("wbi_img") or {}
                 img_url = wbi_img.get("img_url", "")
                 sub_url = wbi_img.get("sub_url", "")
                 # 从 URL 中提取文件名（不含扩展名）作为 key
@@ -222,10 +223,14 @@ class BiliAPIClient:
         md_url = f"https://api.bilibili.com/pgc/review/user?media_id={media_id}"
 
         md_info = await self._get(md_url)
-        if not md_info.get('result'):
+        result = md_info.get('result') or {}
+        if not result:
             raise ValueError("Fetch bangumi information via mdid failed!")
 
-        season_id = md_info['result']['media']['season_id']
+        media = result.get('media') or {}
+        season_id = media.get('season_id')
+        if not season_id:
+            raise ValueError("Fetch bangumi season_id via mdid failed!")
         url = f"https://api.bilibili.com/pgc/view/web/season?season_id={season_id}"
 
         ret = await self._get(url)

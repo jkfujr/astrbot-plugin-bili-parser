@@ -86,7 +86,7 @@ class BiliParser(Star):
             try:
                 self._cookie_task.cancel()
                 await self._cookie_task
-            except Exception:
+            except asyncio.CancelledError:
                 pass
 
     async def _extract_event_links(self, event: AstrMessageEvent, debug: bool):
