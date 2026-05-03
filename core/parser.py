@@ -2,8 +2,9 @@
 B站链接提取与解析
 """
 
-import re
 import asyncio
+import json
+import re
 from typing import List, Dict, Any
 
 from ..utils import normalize_video_id
@@ -113,7 +114,6 @@ class BiliLinkParser:
                             extracted_urls.append(v)
                         else:
                             # Napcat/OneBot 给到的 JSON 内可能嵌套被直接 Stringify 的 JSON 文本（如 data="{\"ver...}"）
-                            import json
                             v_stripped = v.strip()
                             if v_stripped.startswith('{') or v_stripped.startswith('['):
                                 try:

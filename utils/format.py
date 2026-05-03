@@ -2,10 +2,9 @@
 格式化工具函数与 BV/AV 转换器
 """
 
-import logging
 from typing import Union
 
-logger = logging.getLogger("astrbot")
+from astrbot.api import logger
 
 
 class BvAvConverter:
