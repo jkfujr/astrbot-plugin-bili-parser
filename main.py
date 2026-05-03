@@ -16,6 +16,8 @@ import astrbot.api.message_components as Comp
 from .core import BiliAPIClient, CookieManager, BiliLinkParser
 from .utils import format_number, format_live_status
 
+TEMPLATE_RENDER_ERROR_TEXT = "[模板解析失败] 请检查插件回复模板配置。"
+
 
 @register("astrbot_plugin_bili_parser", "BiliParser", "Bilibili Link Parser Plugin", "0.0.3", "https://github.com/jkfujr/astrbot_plugin_bili_parser")
 class BiliParser(Star):
@@ -209,16 +211,20 @@ class BiliParser(Star):
             logger.error(f"[BiliParser] 读取默认 schema 失败: {schema_err}")
 
         if not default_tmpl:
-            raise error
+            return TEMPLATE_RENDER_ERROR_TEXT
 
         logger.info(f"[BiliParser] 正在使用默认模板重试渲染: {section}.{key}")
         self.config[section][key] = default_tmpl
         logger.info("[BiliParser] 内存中已重置当前的出错配置。如果需要永久生效，请前往客户端/网页控制台重新保存一次插件配置。")
 
-        template = self.env.from_string(default_tmpl)
-        template.source = default_tmpl
-        self.template_cache[cache_key] = template
-        return self._render_template(template, context, link)
+        try:
+            template = self.env.from_string(default_tmpl)
+            template.source = default_tmpl
+            self.template_cache[cache_key] = template
+            return self._render_template(template, context, link)
+        except jinja2.exceptions.TemplateError as retry_error:
+            logger.error(f"[BiliParser] 默认模板重试渲染仍然失败: {retry_error}")
+            return TEMPLATE_RENDER_ERROR_TEXT
 
     def _get_current_episode(self, context, link, key):
         if link.type == 'BangumiEp':
@@ -238,24 +244,26 @@ class BiliParser(Star):
 
     def _build_message_chain(self, reply_text: str):
         chain = []
-        parts = re.split(r'(<img\s+src="[^"]+"\s*/?>)', reply_text)
-        for part in parts:
-            if not part:
-                continue
+        img_pattern = re.compile(r'<img\b[^>]*\bsrc\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\'"\s>]+))[^>]*>', re.I)
+        last_end = 0
+        for img_match in img_pattern.finditer(reply_text):
+            text_part = reply_text[last_end:img_match.start()].strip('\n')
+            if text_part:
+                chain.append(Comp.Plain(text_part + '\n'))
 
-            img_match = re.match(r'<img\s+src="([^"]+)"\s*/?>', part)
-            if img_match:
-                img_url = img_match.group(1)
-                if img_url.startswith('//'):
-                    img_url = 'https:' + img_url
-                elif img_url.startswith('http:'):
-                    img_url = 'https' + img_url[4:]
+            img_url = img_match.group(1) or img_match.group(2) or img_match.group(3) or ""
+            if img_url.startswith('//'):
+                img_url = 'https:' + img_url
+            elif img_url.startswith('http:'):
+                img_url = 'https' + img_url[4:]
 
+            if img_url:
                 chain.append(Comp.Image.fromURL(img_url))
-            else:
-                text_part = part.strip('\n')
-                if text_part:
-                    chain.append(Comp.Plain(text_part + '\n'))
+            last_end = img_match.end()
+
+        text_part = reply_text[last_end:].strip('\n')
+        if text_part:
+            chain.append(Comp.Plain(text_part + '\n'))
 
         return chain
 

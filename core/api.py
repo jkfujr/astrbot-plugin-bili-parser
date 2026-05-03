@@ -7,6 +7,7 @@ B站 API 客户端
 from astrbot.api import logger
 import aiohttp
 from aiohttp_socks import ProxyConnector
+import asyncio
 import hashlib
 import re
 import random
@@ -73,9 +74,11 @@ class BiliAPIClient:
         self._cookie = cookie_manager
         self._proxy_url = network_config.get("proxy_url", "").strip()
         self._session: Optional[aiohttp.ClientSession] = None
+        self._session_lock = asyncio.Lock()
         # Wbi mixin key 缓存
         self._wbi_mixin_key: str = ""
         self._wbi_key_expire: float = 0
+        self._wbi_lock = asyncio.Lock()
 
     def _create_session(self) -> aiohttp.ClientSession:
         """创建 HTTP 会话，按配置统一接入代理"""
@@ -94,18 +97,23 @@ class BiliAPIClient:
 
     async def start(self):
         """初始化 HTTP 会话"""
-        self._session = self._create_session()
+        await self._ensure_session()
 
     async def stop(self):
         """关闭 HTTP 会话"""
-        if self._session:
-            await self._session.close()
-            self._session = None
+        async with self._session_lock:
+            if self._session:
+                await self._session.close()
+                self._session = None
 
-    def _ensure_session(self):
+    async def _ensure_session(self):
         """确保 session 存在"""
-        if not self._session:
-            self._session = self._create_session()
+        if self._session and not self._session.closed:
+            return
+
+        async with self._session_lock:
+            if not self._session or self._session.closed:
+                self._session = self._create_session()
 
     def _build_headers(self) -> dict:
         """构建通用请求头"""
@@ -126,24 +134,29 @@ class BiliAPIClient:
         if self._wbi_mixin_key and now < self._wbi_key_expire:
             return self._wbi_mixin_key
 
-        # 请求导航接口获取 wbi_img
-        self._ensure_session()
-        nav_url = "https://api.bilibili.com/x/web-interface/nav"
-        try:
-            async with self._session.get(nav_url, headers=self._build_headers()) as resp:
-                data = await resp.json()
-                data_dict = data.get("data") or {}
-                wbi_img = data_dict.get("wbi_img") or {}
-                img_url = wbi_img.get("img_url", "")
-                sub_url = wbi_img.get("sub_url", "")
-                # 从 URL 中提取文件名（不含扩展名）作为 key
-                img_key = img_url.rsplit("/", 1)[-1].split(".")[0] if img_url else ""
-                sub_key = sub_url.rsplit("/", 1)[-1].split(".")[0] if sub_url else ""
-                self._wbi_mixin_key = _calc_mixin_key(img_key, sub_key)
-                self._wbi_key_expire = now + 1800  # 缓存 30 分钟
-                logger.info(f"[BiliParser] 已获取 Wbi mixin key: {self._wbi_mixin_key[:8]}...")
-        except Exception as e:
-            logger.error(f"[BiliParser] 获取 Wbi mixin key 失败: {e}")
+        async with self._wbi_lock:
+            now = time.time()
+            if self._wbi_mixin_key and now < self._wbi_key_expire:
+                return self._wbi_mixin_key
+
+            # 请求导航接口获取 wbi_img
+            await self._ensure_session()
+            nav_url = "https://api.bilibili.com/x/web-interface/nav"
+            try:
+                async with self._session.get(nav_url, headers=self._build_headers()) as resp:
+                    data = await resp.json()
+                    data_dict = data.get("data") or {}
+                    wbi_img = data_dict.get("wbi_img") or {}
+                    img_url = wbi_img.get("img_url", "")
+                    sub_url = wbi_img.get("sub_url", "")
+                    # 从 URL 中提取文件名（不含扩展名）作为 key
+                    img_key = img_url.rsplit("/", 1)[-1].split(".")[0] if img_url else ""
+                    sub_key = sub_url.rsplit("/", 1)[-1].split(".")[0] if sub_url else ""
+                    self._wbi_mixin_key = _calc_mixin_key(img_key, sub_key)
+                    self._wbi_key_expire = now + 1800  # 缓存 30 分钟
+                    logger.info(f"[BiliParser] 已获取 Wbi mixin key: {self._wbi_mixin_key[:8]}...")
+            except Exception as e:
+                logger.error(f"[BiliParser] 获取 Wbi mixin key 失败: {e}")
 
         return self._wbi_mixin_key
 
@@ -151,7 +164,7 @@ class BiliAPIClient:
 
     async def _get(self, url: str) -> Dict[str, Any]:
         """普通 GET 请求"""
-        self._ensure_session()
+        await self._ensure_session()
         try:
             async with self._session.get(url, headers=self._build_headers()) as resp:
                 resp.raise_for_status()
@@ -162,7 +175,7 @@ class BiliAPIClient:
 
     async def _get_with_wbi(self, url: str, params: dict) -> Dict[str, Any]:
         """带 Wbi 签名 + 设备指纹的 GET 请求"""
-        self._ensure_session()
+        await self._ensure_session()
         mixin_key = await self._get_wbi_mixin_key()
         if mixin_key:
             params = _add_dm_params(params)
@@ -283,7 +296,7 @@ class BiliAPIClient:
     async def get_short_redir_url(self, short_id: str) -> str:
         """获取短链接跳转真实地址"""
         url = f"https://b23.tv/{short_id}"
-        self._ensure_session()
+        await self._ensure_session()
         try:
             async with self._session.head(url, allow_redirects=True) as resp:
                 return str(resp.url)

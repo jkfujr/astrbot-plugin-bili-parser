@@ -56,6 +56,10 @@ class CookieManager:
 
     async def _refresh(self):
         """从外部管理器拉取 Cookie 池"""
+        if not self._session:
+            logger.error("[CookieManager] Cookie session not initialized")
+            return
+
         manager_url = self._config.get("manager_url")
         if not manager_url:
             logger.warning("[CookieManager] Cookie manager URL not configured")
@@ -68,11 +72,6 @@ class CookieManager:
 
         try:
             api_url = f"{manager_url.rstrip('/')}/cookies/"
-            if not self._session:
-                self._session = aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=10)
-                )
-
             async with self._session.get(api_url, headers=headers) as resp:
                 if resp.status == 200:
                     cookies_data = await resp.json()
