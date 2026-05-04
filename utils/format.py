@@ -108,7 +108,7 @@ def normalize_video_id(video_id: str) -> str:
             return f"av{video_id}"
 
         return video_id
-    except Exception as e:
+    except ValueError as e:
         logger.warning(f"normalize_video_id error for {video_id}: {e}")
         return video_id
 

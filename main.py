@@ -4,11 +4,11 @@ import os
 import re
 import traceback
 from functools import partial
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import jinja2
 
-from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
+from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
 import astrbot.api.message_components as Comp
@@ -82,14 +82,16 @@ class BiliParser(Star):
 
     async def terminate(self):
         """插件卸载时调用"""
-        await self.api_client.stop()
-        await self.cookie_manager.stop()
         if self._cookie_task:
             try:
                 self._cookie_task.cancel()
                 await self._cookie_task
             except asyncio.CancelledError:
                 pass
+            finally:
+                self._cookie_task = None
+        await self.cookie_manager.stop()
+        await self.api_client.stop()
 
     async def _extract_event_links(self, event: AstrMessageEvent, debug: bool):
         message_str = event.message_str
@@ -175,19 +177,18 @@ class BiliParser(Star):
             logger.warning(f"[BiliParser] 配置中未找到 {section}.{key} 模板，请检查插件配置")
             return None
 
-        cache_key = template_path
-        if cache_key not in self.template_cache or getattr(self.template_cache[cache_key], 'source', None) != template_str:
-            template = self.env.from_string(template_str)
-            template.source = template_str
-            self.template_cache[cache_key] = template
-        else:
-            template = self.template_cache[cache_key]
-
         context = data.get('data', {})
         if 'result' in data and not context:
             context = data['result']
 
+        cache_key = template_path
         try:
+            cached_template = self.template_cache.get(cache_key)
+            if not cached_template or cached_template[0] != template_str:
+                template = self.env.from_string(template_str)
+                self.template_cache[cache_key] = (template_str, template)
+            else:
+                template = cached_template[1]
             return self._render_template(template, context, link)
         except jinja2.exceptions.TemplateError as te:
             return self._render_with_default_template(section, key, cache_key, context, link, te)
@@ -214,13 +215,12 @@ class BiliParser(Star):
             return TEMPLATE_RENDER_ERROR_TEXT
 
         logger.info(f"[BiliParser] 正在使用默认模板重试渲染: {section}.{key}")
-        self.config[section][key] = default_tmpl
+        self.config.setdefault(section, {})[key] = default_tmpl
         logger.info("[BiliParser] 内存中已重置当前的出错配置。如果需要永久生效，请前往客户端/网页控制台重新保存一次插件配置。")
 
         try:
             template = self.env.from_string(default_tmpl)
-            template.source = default_tmpl
-            self.template_cache[cache_key] = template
+            self.template_cache[cache_key] = (default_tmpl, template)
             return self._render_template(template, context, link)
         except jinja2.exceptions.TemplateError as retry_error:
             logger.error(f"[BiliParser] 默认模板重试渲染仍然失败: {retry_error}")
@@ -228,42 +228,128 @@ class BiliParser(Star):
 
     def _get_current_episode(self, context, link, key):
         if link.type == 'BangumiEp':
-            try:
-                ep_id_str = re.sub(r'^ep', '', link.id, flags=re.IGNORECASE)
-                ep_id = int(ep_id_str)
-                episodes = context.get('episodes', [])
-                for ep in episodes:
-                    if ep.get('ep_id') == ep_id:
-                        return ep.get(key)
-            except Exception:
-                pass
+            ep_id_str = re.sub(r'^ep', '', link.id, flags=re.IGNORECASE)
+            if not ep_id_str.isdigit():
+                return ""
+
+            ep_id = int(ep_id_str)
+            episodes = context.get('episodes', [])
+            for ep in episodes:
+                if isinstance(ep, dict) and ep.get('ep_id') == ep_id:
+                    return ep.get(key)
         return ""
 
     def _get_article_id(self, link):
         return re.sub(r'^cv', '', link.id, flags=re.IGNORECASE)
 
-    def _build_message_chain(self, reply_text: str):
-        chain = []
-        img_pattern = re.compile(r'<img\b[^>]*\bsrc\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\'"\s>]+))[^>]*>', re.I)
-        last_end = 0
-        for img_match in img_pattern.finditer(reply_text):
-            text_part = reply_text[last_end:img_match.start()].strip('\n')
-            if text_part:
-                chain.append(Comp.Plain(text_part + '\n'))
+    def _is_img_tag_start(self, reply_text: str, pos: int) -> bool:
+        if reply_text[pos] != '<':
+            return False
+        if reply_text[pos + 1:pos + 4].lower() != 'img':
+            return False
+        boundary = pos + 4
+        return boundary >= len(reply_text) or reply_text[boundary].isspace() or reply_text[boundary] in '/>'
 
-            img_url = img_match.group(1) or img_match.group(2) or img_match.group(3) or ""
-            if img_url.startswith('//'):
-                img_url = 'https:' + img_url
-            elif img_url.startswith('http:'):
-                img_url = 'https' + img_url[4:]
+    def _find_tag_end(self, reply_text: str, start: int) -> int:
+        quote = ''
+        for pos in range(start + 1, len(reply_text)):
+            char = reply_text[pos]
+            if quote:
+                if char == quote:
+                    quote = ''
+            elif char in ('"', "'"):
+                quote = char
+            elif char == '>':
+                return pos + 1
+        return -1
 
-            if img_url:
-                chain.append(Comp.Image.fromURL(img_url))
-            last_end = img_match.end()
+    def _extract_img_src(self, tag: str) -> Optional[str]:
+        pos = 4
+        end = len(tag) - 1 if tag.endswith('>') else len(tag)
 
-        text_part = reply_text[last_end:].strip('\n')
+        while pos < end:
+            while pos < end and (tag[pos].isspace() or tag[pos] == '/'):
+                pos += 1
+            if pos >= end:
+                break
+
+            name_start = pos
+            while pos < end and not tag[pos].isspace() and tag[pos] not in '=/>':
+                pos += 1
+            attr_name = tag[name_start:pos].lower()
+
+            while pos < end and tag[pos].isspace():
+                pos += 1
+
+            attr_value = ''
+            if pos < end and tag[pos] == '=':
+                pos += 1
+                while pos < end and tag[pos].isspace():
+                    pos += 1
+
+                if pos < end and tag[pos] in ('"', "'"):
+                    quote = tag[pos]
+                    pos += 1
+                    value_start = pos
+                    while pos < end and tag[pos] != quote:
+                        pos += 1
+                    attr_value = tag[value_start:pos]
+                    if pos < end and tag[pos] == quote:
+                        pos += 1
+                else:
+                    value_start = pos
+                    while pos < end and not tag[pos].isspace() and tag[pos] != '>':
+                        pos += 1
+                    attr_value = tag[value_start:pos]
+
+            if attr_name == 'src':
+                return attr_value
+
+        return None
+
+    def _append_plain_text(self, chain, text: str):
+        text_part = text.strip('\n')
         if text_part:
             chain.append(Comp.Plain(text_part + '\n'))
+
+    def _normalize_image_url(self, img_url: str) -> str:
+        if img_url.startswith('//'):
+            return 'https:' + img_url
+        if img_url.startswith('http:'):
+            return 'https' + img_url[4:]
+        if img_url.startswith('https:'):
+            return img_url
+        return ""
+
+    def _build_message_chain(self, event: AstrMessageEvent, reply_text: str):
+        chain = []
+        pos = 0
+        last_end = 0
+        while pos < len(reply_text):
+            if not self._is_img_tag_start(reply_text, pos):
+                pos += 1
+                continue
+
+            tag_end = self._find_tag_end(reply_text, pos)
+            if tag_end == -1:
+                pos += 1
+                continue
+
+            img_src = self._extract_img_src(reply_text[pos:tag_end])
+            if img_src is not None:
+                self._append_plain_text(chain, reply_text[last_end:pos])
+                img_url = self._normalize_image_url(img_src)
+                if img_url:
+                    chain.append(Comp.Image.fromURL(img_url))
+                last_end = tag_end
+            pos = tag_end
+
+        self._append_plain_text(chain, reply_text[last_end:])
+
+        if chain and self.config.get("basic", {}).get("show_quote", True):
+            message_id = getattr(getattr(event, "message_obj", None), "message_id", None)
+            if message_id:
+                chain.insert(0, Comp.Reply(id=message_id))
 
         return chain
 
@@ -293,6 +379,6 @@ class BiliParser(Star):
         if results:
             delimiter = self.config.get("basic", {}).get("custom_delimiter", "\n------\n")
             reply_text = delimiter.join(results)
-            chain = self._build_message_chain(reply_text)
+            chain = self._build_message_chain(event, reply_text)
             if chain:
                 yield event.chain_result(chain)

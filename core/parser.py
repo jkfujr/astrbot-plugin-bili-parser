@@ -14,7 +14,6 @@ class Link:
     def __init__(self, type_: str, id_: str):
         self.type = type_
         self.id = id_
-        self.data: Dict[str, Any] = {}
 
     def __repr__(self):
         return f"Link(type={self.type}, id={self.id})"
@@ -136,7 +135,7 @@ class BiliLinkParser:
                             try:
                                 parsed_v = json.loads(v_stripped)
                                 self._find_urls_in_json(parsed_v, extracted_urls, depth + 1)
-                            except Exception:
+                            except json.JSONDecodeError:
                                 pass
                 else:
                     self._find_urls_in_json(v, extracted_urls, depth + 1)

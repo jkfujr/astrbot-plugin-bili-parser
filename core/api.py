@@ -78,6 +78,7 @@ class BiliAPIClient:
         # Wbi mixin key 缓存
         self._wbi_mixin_key: str = ""
         self._wbi_key_expire: float = 0
+        self._wbi_retry_after: float = 0
         self._wbi_lock = asyncio.Lock()
 
     def _create_session(self) -> aiohttp.ClientSession:
@@ -133,11 +134,15 @@ class BiliAPIClient:
         now = time.time()
         if self._wbi_mixin_key and now < self._wbi_key_expire:
             return self._wbi_mixin_key
+        if now < self._wbi_retry_after:
+            return ""
 
         async with self._wbi_lock:
             now = time.time()
             if self._wbi_mixin_key and now < self._wbi_key_expire:
                 return self._wbi_mixin_key
+            if now < self._wbi_retry_after:
+                return ""
 
             # 请求导航接口获取 wbi_img
             await self._ensure_session()
@@ -152,11 +157,21 @@ class BiliAPIClient:
                     # 从 URL 中提取文件名（不含扩展名）作为 key
                     img_key = img_url.rsplit("/", 1)[-1].split(".")[0] if img_url else ""
                     sub_key = sub_url.rsplit("/", 1)[-1].split(".")[0] if sub_url else ""
+                    if not img_key or not sub_key:
+                        self._wbi_mixin_key = ""
+                        self._wbi_key_expire = 0
+                        self._wbi_retry_after = now + 60
+                        logger.warning("[BiliParser] 获取 Wbi mixin key 失败: nav 接口未返回有效 wbi_img")
+                        return ""
                     self._wbi_mixin_key = _calc_mixin_key(img_key, sub_key)
                     self._wbi_key_expire = now + 1800  # 缓存 30 分钟
+                    self._wbi_retry_after = 0
                     logger.info(f"[BiliParser] 已获取 Wbi mixin key: {self._wbi_mixin_key[:8]}...")
             except Exception as e:
                 logger.error(f"[BiliParser] 获取 Wbi mixin key 失败: {e}")
+                self._wbi_mixin_key = ""
+                self._wbi_key_expire = 0
+                self._wbi_retry_after = now + 60
 
         return self._wbi_mixin_key
 
@@ -175,12 +190,12 @@ class BiliAPIClient:
 
     async def _get_with_wbi(self, url: str, params: dict) -> Dict[str, Any]:
         """带 Wbi 签名 + 设备指纹的 GET 请求"""
-        await self._ensure_session()
         mixin_key = await self._get_wbi_mixin_key()
         if mixin_key:
             params = _add_dm_params(params)
             params = _sign_wbi_params(params, mixin_key)
 
+        await self._ensure_session()
         try:
             async with self._session.get(url, params=params, headers=self._build_headers()) as resp:
                 resp.raise_for_status()

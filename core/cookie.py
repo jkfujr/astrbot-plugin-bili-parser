@@ -21,28 +21,36 @@ class CookieManager:
         self._refresh_task: Optional[asyncio.Task] = None
         self._running = False
         self._session: Optional[aiohttp.ClientSession] = None
+        self._lifecycle_lock = asyncio.Lock()
 
     async def start(self):
         """启动管理器（仅 manager 模式需要）"""
-        if self._mode == "manager":
-            self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=10)
-            )
+        async with self._lifecycle_lock:
+            if self._mode != "manager" or self._running:
+                return
+
+            if not self._session or self._session.closed:
+                self._session = aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=10)
+                )
             self._running = True
             await self._refresh()
             self._refresh_task = asyncio.create_task(self._auto_refresh_loop())
 
     async def stop(self):
         """停止管理器"""
-        self._running = False
-        if self._refresh_task:
-            self._refresh_task.cancel()
-            try:
-                await self._refresh_task
-            except asyncio.CancelledError:
-                pass
-        if self._session:
-            await self._session.close()
+        async with self._lifecycle_lock:
+            self._running = False
+            if self._refresh_task:
+                self._refresh_task.cancel()
+                try:
+                    await self._refresh_task
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    self._refresh_task = None
+            if self._session and not self._session.closed:
+                await self._session.close()
             self._session = None
 
     def get_cookie(self) -> str:
@@ -56,7 +64,7 @@ class CookieManager:
 
     async def _refresh(self):
         """从外部管理器拉取 Cookie 池"""
-        if not self._session:
+        if not self._session or self._session.closed:
             logger.error("[CookieManager] Cookie session not initialized")
             return
 
