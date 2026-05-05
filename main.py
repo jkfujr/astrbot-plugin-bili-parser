@@ -5,6 +5,7 @@ import re
 import traceback
 from functools import partial
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit
 
 import jinja2
 
@@ -151,7 +152,12 @@ class BiliParser(Star):
         if debug:
             logger.info(f"[BiliParser][DEBUG] 请求 {link.type} id={link.id}")
 
-        data = await fetch_func(link.id)
+        try:
+            data = await fetch_func(link.id)
+        except ValueError as e:
+            logger.warning(f"[BiliParser] fetch {link.type} {link.id} 解析失败: {e}")
+            return None, f"[解析失败] {link.type} {link.id}：{e}"
+
         if debug:
             logger.info(f"[BiliParser][DEBUG] {link.type} {link.id} 响应 code={data.get('code') if data else None}")
 
@@ -316,12 +322,20 @@ class BiliParser(Star):
         img_url = img_url.strip()
         img_url_lower = img_url.lower()
         if img_url.startswith('//'):
-            return 'https:' + img_url
-        if img_url_lower.startswith('http://'):
-            return 'https://' + img_url[7:]
-        if img_url_lower.startswith('https://'):
-            return 'https://' + img_url[8:]
-        return ""
+            normalized = 'https:' + img_url
+        elif img_url_lower.startswith('http://'):
+            normalized = 'https://' + img_url[7:]
+        elif img_url_lower.startswith('https://'):
+            normalized = 'https://' + img_url[8:]
+        else:
+            return ""
+
+        if re.search(r'\s', normalized):
+            return ""
+        parsed = urlsplit(normalized)
+        if parsed.scheme != 'https' or not parsed.netloc:
+            return ""
+        return normalized
 
     def _build_message_chain(self, event: AstrMessageEvent, reply_text: str):
         chain = []
