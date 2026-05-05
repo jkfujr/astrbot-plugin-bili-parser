@@ -16,6 +16,7 @@ import astrbot.api.message_components as Comp
 
 from .core import BiliAPIClient, CookieManager, BiliLinkParser
 from .utils import format_number, format_live_status
+from .utils.remote_image import enable_remote_image_delivery
 
 TEMPLATE_RENDER_ERROR_TEXT = "[模板解析失败] 请检查插件回复模板配置。"
 
@@ -397,4 +398,5 @@ class BiliParser(Star):
             reply_text = delimiter.join(results)
             chain = self._build_message_chain(event, reply_text)
             if chain:
-                yield event.chain_result(chain)
+                result = event.chain_result(chain)
+                yield enable_remote_image_delivery(event, result)
