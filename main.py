@@ -313,12 +313,14 @@ class BiliParser(Star):
             chain.append(Comp.Plain(text_part + '\n'))
 
     def _normalize_image_url(self, img_url: str) -> str:
+        img_url = img_url.strip()
+        img_url_lower = img_url.lower()
         if img_url.startswith('//'):
             return 'https:' + img_url
-        if img_url.startswith('http:'):
-            return 'https' + img_url[4:]
-        if img_url.startswith('https:'):
-            return img_url
+        if img_url_lower.startswith('http://'):
+            return 'https://' + img_url[7:]
+        if img_url_lower.startswith('https://'):
+            return 'https://' + img_url[8:]
         return ""
 
     def _build_message_chain(self, event: AstrMessageEvent, reply_text: str):
