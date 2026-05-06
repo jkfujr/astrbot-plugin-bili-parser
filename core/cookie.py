@@ -11,6 +11,9 @@ import random
 from typing import List, Optional, Dict, Any
 
 
+COOKIE_MANAGER_REFRESH_TIMEOUT = aiohttp.ClientTimeout(total=5)
+
+
 class CookieManager:
     """Cookie 池管理器"""
 
@@ -80,7 +83,11 @@ class CookieManager:
 
         try:
             api_url = f"{manager_url.rstrip('/')}/cookies/"
-            async with self._session.get(api_url, headers=headers) as resp:
+            async with self._session.get(
+                api_url,
+                headers=headers,
+                timeout=COOKIE_MANAGER_REFRESH_TIMEOUT,
+            ) as resp:
                 if resp.status == 200:
                     cookies_data = await resp.json()
                     valid_cookies = []

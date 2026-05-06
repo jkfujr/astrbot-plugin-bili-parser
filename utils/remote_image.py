@@ -5,6 +5,8 @@ from astrbot.api import logger
 from astrbot.api.message_components import Image
 
 
+# 当前模块通过包装 aiocqhttp 事件发送路径实现图片 URL 直传，避免旧发送链路下载图片转 base64。
+# 如果 AstrBot 默认发送链路已稳定支持远程图片 URL，可移除此模块的事件包装逻辑。
 REMOTE_IMAGE_FLAG = "_bili_parser_remote_image_send_enabled"
 ORIGINAL_SEND_ATTR = "_bili_parser_original_send"
 REMOTE_IMAGE_RESULT_FLAG = "_bili_parser_remote_image_result"
@@ -179,6 +181,4 @@ def _get_remote_image_url(component: Any) -> str:
 
 def _component_type(component: Any) -> str:
     component_type = getattr(component, "type", "")
-    if hasattr(component_type, "value"):
-        return component_type.value
-    return str(component_type)
+    return str(getattr(component_type, "value", component_type))

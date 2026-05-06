@@ -20,6 +20,18 @@ from .cookie import CookieManager
 
 # ==================== Wbi 签名基础设施 ====================
 
+WBI_DEFAULT_WEB_LOCATION = 1550101
+WBI_DM_RANDOM_CHARS = "ABCDEFGHIJK"
+WBI_DM_IMG_LIST = "[]"
+WBI_DM_IMG_INTER = '{"ds":[],"wh":[0,0,0],"of":[0,0,0]}'
+
+OPUS_TIMEZONE_OFFSET = -480
+OPUS_PLATFORM = "web"
+OPUS_GAIA_SOURCE = "main_web"
+OPUS_FEATURES = "itemOpusStyle,opusBigCover,onlyfansVote,endFooterHidden,decorationCard,onlyfansAssetsV2,ugcDelete"
+OPUS_DEVICE_REQ_JSON = '{"platform":"web","device":"pc"}'
+OPUS_WEB_REQ_JSON = '{"spm_id":"333.1368"}'
+
 # Wbi mixin key 混淆索引表（源自 bilibili-api-collect 逆向）
 _WBI_SHUFFLE_TABLE = [
     46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
@@ -39,7 +51,7 @@ def _sign_wbi_params(params: dict, mixin_key: str) -> dict:
     """对请求参数附加 Wbi 签名（wts + w_rid）"""
     params["wts"] = int(time.time())
     if not params.get("web_location"):
-        params["web_location"] = 1550101
+        params["web_location"] = WBI_DEFAULT_WEB_LOCATION
     # 按 key 排序后 url 编码，拼接 mixin_key，取 MD5
     query = urllib.parse.urlencode(sorted(params.items()))
     params["w_rid"] = hashlib.md5((query + mixin_key).encode("utf-8")).hexdigest()
@@ -48,12 +60,11 @@ def _sign_wbi_params(params: dict, mixin_key: str) -> dict:
 
 def _add_dm_params(params: dict) -> dict:
     """附加反爬虫鼠标指纹参数（dm_img_*）"""
-    dm_rand = "ABCDEFGHIJK"
     params.update({
-        "dm_img_list": "[]",
-        "dm_img_str": "".join(random.sample(dm_rand, 2)),
-        "dm_cover_img_str": "".join(random.sample(dm_rand, 2)),
-        "dm_img_inter": '{"ds":[],"wh":[0,0,0],"of":[0,0,0]}',
+        "dm_img_list": WBI_DM_IMG_LIST,
+        "dm_img_str": "".join(random.sample(WBI_DM_RANDOM_CHARS, 2)),
+        "dm_cover_img_str": "".join(random.sample(WBI_DM_RANDOM_CHARS, 2)),
+        "dm_img_inter": WBI_DM_IMG_INTER,
     })
     return params
 
@@ -83,7 +94,7 @@ class BiliAPIClient:
 
     def _create_session(self) -> aiohttp.ClientSession:
         """创建 HTTP 会话，按配置统一接入代理"""
-        kwargs = {"timeout": aiohttp.ClientTimeout(total=10)}
+        kwargs: Dict[str, Any] = {"timeout": aiohttp.ClientTimeout(total=10)}
         if self._proxy_url:
             proxy_url = self._proxy_url
             proxy_url_lower = proxy_url.lower()
@@ -116,6 +127,13 @@ class BiliAPIClient:
             if not self._session or self._session.closed:
                 self._session = self._create_session()
 
+    async def _require_session(self) -> aiohttp.ClientSession:
+        """返回已初始化的 session，供静态类型检查收窄 Optional。"""
+        await self._ensure_session()
+        if self._session is None:
+            raise RuntimeError("Bili API session not initialized")
+        return self._session
+
     def _build_headers(self) -> dict:
         """构建通用请求头"""
         headers = {
@@ -145,10 +163,10 @@ class BiliAPIClient:
                 return ""
 
             # 请求导航接口获取 wbi_img
-            await self._ensure_session()
+            session = await self._require_session()
             nav_url = "https://api.bilibili.com/x/web-interface/nav"
             try:
-                async with self._session.get(nav_url, headers=self._build_headers()) as resp:
+                async with session.get(nav_url, headers=self._build_headers()) as resp:
                     data = await resp.json()
                     data_dict = data.get("data") or {}
                     wbi_img = data_dict.get("wbi_img") or {}
@@ -179,9 +197,9 @@ class BiliAPIClient:
 
     async def _get(self, url: str) -> Dict[str, Any]:
         """普通 GET 请求"""
-        await self._ensure_session()
+        session = await self._require_session()
         try:
-            async with self._session.get(url, headers=self._build_headers()) as resp:
+            async with session.get(url, headers=self._build_headers()) as resp:
                 resp.raise_for_status()
                 return await resp.json()
         except Exception as e:
@@ -195,9 +213,9 @@ class BiliAPIClient:
             params = _add_dm_params(params)
             params = _sign_wbi_params(params, mixin_key)
 
-        await self._ensure_session()
+        session = await self._require_session()
         try:
-            async with self._session.get(url, params=params, headers=self._build_headers()) as resp:
+            async with session.get(url, params=params, headers=self._build_headers()) as resp:
                 resp.raise_for_status()
                 return await resp.json()
         except Exception as e:
@@ -276,12 +294,12 @@ class BiliAPIClient:
         url = "https://api.bilibili.com/x/polymer/web-dynamic/v1/detail"
         params = {
             "id": id_str,
-            "timezone_offset": -480,
-            "platform": "web",
-            "gaia_source": "main_web",
-            "features": "itemOpusStyle,opusBigCover,onlyfansVote,endFooterHidden,decorationCard,onlyfansAssetsV2,ugcDelete",
-            "x-bili-device-req-json": '{"platform":"web","device":"pc"}',
-            "x-bili-web-req-json": '{"spm_id":"333.1368"}',
+            "timezone_offset": OPUS_TIMEZONE_OFFSET,
+            "platform": OPUS_PLATFORM,
+            "gaia_source": OPUS_GAIA_SOURCE,
+            "features": OPUS_FEATURES,
+            "x-bili-device-req-json": OPUS_DEVICE_REQ_JSON,
+            "x-bili-web-req-json": OPUS_WEB_REQ_JSON,
         }
         resp_data = await self._get_with_wbi(url, params)
 
@@ -311,9 +329,9 @@ class BiliAPIClient:
     async def get_short_redir_url(self, short_id: str) -> str:
         """获取短链接跳转真实地址"""
         url = f"https://b23.tv/{short_id}"
-        await self._ensure_session()
+        session = await self._require_session()
         try:
-            async with self._session.head(url, allow_redirects=True) as resp:
+            async with session.head(url, allow_redirects=True) as resp:
                 return str(resp.url)
         except Exception:
             return ""

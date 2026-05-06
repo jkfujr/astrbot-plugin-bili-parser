@@ -7,6 +7,8 @@ import json
 import re
 from typing import List, Dict, Any
 
+from astrbot.api import logger
+
 from ..utils import normalize_video_id
 
 
@@ -94,13 +96,50 @@ class BiliLinkParser:
     def extract_links(self, content: str) -> List[Link]:
         """从纯文本中提取出所有 B站 链接"""
         results = []
-        sanitized_content = re.sub(r'<[^>]+>', '', content)
+        sanitized_content = self._strip_html_tags(content)
 
         for item in self.patterns:
             for match in item["pattern"].finditer(sanitized_content):
                 results.append(Link(item["type"], match.group(1)))
 
         return self._deduplicate_links(results)
+
+    def _strip_html_tags(self, content: str) -> str:
+        """用线性扫描剥离 HTML 标签，避免正则处理异常长文本。"""
+        if "<" not in content:
+            return content
+
+        result = []
+        pos = 0
+        while pos < len(content):
+            if content[pos] != "<":
+                result.append(content[pos])
+                pos += 1
+                continue
+
+            tag_end = self._find_html_tag_end(content, pos)
+            if tag_end == -1:
+                result.append(content[pos])
+                pos += 1
+            else:
+                pos = tag_end + 1
+
+        return "".join(result)
+
+    def _find_html_tag_end(self, content: str, start: int) -> int:
+        quote = ""
+        pos = start + 1
+        while pos < len(content):
+            ch = content[pos]
+            if quote:
+                if ch == quote:
+                    quote = ""
+            elif ch in ("'", '"'):
+                quote = ch
+            elif ch == ">":
+                return pos
+            pos += 1
+        return -1
 
     def extract_from_json(self, json_data: dict) -> List[Link]:
         """从 QQ 小程序等 JSON 卡片中提取 B站 链接"""
@@ -112,7 +151,7 @@ class BiliLinkParser:
         for url in extracted_urls:
             
             # 使用现有正则从 url 中提取出 Link 对象，注意这里我们跳过了自身内部的去重
-            sanitized_content = re.sub(r'<[^>]+>', '', url)
+            sanitized_content = self._strip_html_tags(url)
             for item in self.patterns:
                 for match in item["pattern"].finditer(sanitized_content):
                     links.append(Link(item["type"], match.group(1)))
@@ -135,8 +174,10 @@ class BiliLinkParser:
                             try:
                                 parsed_v = json.loads(v_stripped)
                                 self._find_urls_in_json(parsed_v, extracted_urls, depth + 1)
-                            except json.JSONDecodeError:
-                                pass
+                            except json.JSONDecodeError as e:
+                                if self.config.get("basic", {}).get("debug_mode", False):
+                                    snippet = v_stripped[:120].replace("\n", "\\n")
+                                    logger.warning(f"[BiliParser] JSON 卡片嵌套字符串解析失败: {e}; content={snippet}")
                 else:
                     self._find_urls_in_json(v, extracted_urls, depth + 1)
         elif isinstance(obj, list):
