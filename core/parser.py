@@ -88,18 +88,32 @@ class BiliLinkParser:
             self.patterns.append({"pattern": re.compile(r'bili(?:22|23|33)\.cn\/([0-9a-zA-Z]+)(?![a-zA-Z0-9])', re.I), "type": "Short"})
 
     def _deduplicate_links(self, links: List[Link]) -> List[Link]:
-        """对提取出的链接列表去重，视频类型按 AV 号归一化后去重，其他类型按 type+id 去重"""
+        """对提取出的链接列表去重；同一视频有评论链接时，丢弃普通视频链接。"""
+        comment_video_ids = {
+            self._video_identity(link)
+            for link in links
+            if link.type == "VideoComment"
+        }
         seen = set()
         results = []
         for link in links:
-            if link.type == "Video":
-                normalized = normalize_video_id(link.id)
-            else:
-                normalized = f"{link.type}:{link.id}"
+            if link.type == "Video" and self._video_identity(link) in comment_video_ids:
+                continue
+
+            normalized = self._link_identity(link)
             if normalized not in seen:
                 seen.add(normalized)
                 results.append(link)
         return results
+
+    def _video_identity(self, link: Link) -> str:
+        return normalize_video_id(link.id)
+
+    def _link_identity(self, link: Link):
+        params = tuple(sorted(link.params.items()))
+        if link.type in ("Video", "VideoComment"):
+            return (link.type, self._video_identity(link), params)
+        return (link.type, link.id, params)
 
     def extract_links(self, content: str) -> List[Link]:
         """从纯文本中提取出所有 B站 链接"""
@@ -200,7 +214,7 @@ class BiliLinkParser:
         for url in extracted_urls:
             links.extend(self.extract_links(url))
 
-        return links
+        return self._deduplicate_links(links)
 
     def _find_urls_in_json(self, obj, extracted_urls: List[str], depth: int):
         if depth > self.max_json_depth:
