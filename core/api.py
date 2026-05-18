@@ -134,13 +134,13 @@ class BiliAPIClient:
             raise RuntimeError("Bili API session not initialized")
         return self._session
 
-    def _build_headers(self) -> dict:
+    def _build_headers(self, referer: Optional[str] = None, use_cookie: bool = True) -> dict:
         """构建通用请求头"""
         headers = {
             "User-Agent": self._user_agent,
-            "Referer": "https://www.bilibili.com",
+            "Referer": referer or "https://www.bilibili.com",
         }
-        cookie = self._cookie.get_cookie()
+        cookie = self._cookie.get_cookie() if use_cookie else ""
         if cookie:
             headers["Cookie"] = cookie
         return headers
@@ -195,11 +195,17 @@ class BiliAPIClient:
 
     # ---- HTTP 请求方法 ----
 
-    async def _get(self, url: str) -> Dict[str, Any]:
+    async def _get(
+        self,
+        url: str,
+        params: Optional[dict] = None,
+        referer: Optional[str] = None,
+        use_cookie: bool = True,
+    ) -> Dict[str, Any]:
         """普通 GET 请求"""
         session = await self._require_session()
         try:
-            async with session.get(url, headers=self._build_headers()) as resp:
+            async with session.get(url, params=params, headers=self._build_headers(referer, use_cookie)) as resp:
                 resp.raise_for_status()
                 return await resp.json()
         except Exception as e:
@@ -224,7 +230,7 @@ class BiliAPIClient:
 
     # ---- 各类型资源 API ----
 
-    async def fetch_video(self, id_str: str) -> Dict[str, Any]:
+    async def fetch_video(self, id_str: str, use_cookie: bool = True) -> Dict[str, Any]:
         """获取视频信息"""
         av_match = re.match(r'av([0-9]+)', id_str, re.IGNORECASE)
         bv_match = re.match(r'bv([0-9a-zA-Z]+)', id_str, re.IGNORECASE)
@@ -236,7 +242,42 @@ class BiliAPIClient:
         else:
             url = f"https://api.bilibili.com/x/web-interface/view?bvid={id_str}"
 
-        return await self._get(url)
+        return await self._get(url, use_cookie=use_cookie)
+
+    async def fetch_video_comment(
+        self,
+        video_id: str,
+        root_id: str,
+        use_cookie: bool = False,
+    ) -> Dict[str, Any]:
+        """获取视频评论详情"""
+        video_data = await self.fetch_video(video_id, use_cookie=use_cookie)
+        if video_data.get("code") != 0:
+            return video_data
+
+        video = video_data.get("data") or {}
+        aid = video.get("aid")
+        if not aid:
+            raise ValueError("视频 aid 缺失")
+
+        params = {
+            "type": 1,
+            "oid": aid,
+            "root": root_id,
+        }
+        comment_url = f"https://www.bilibili.com/video/{video.get('bvid', video_id)}?comment_root_id={root_id}"
+        comment_data = await self._get(
+            "https://api.bilibili.com/x/v2/reply/detail",
+            params=params,
+            referer=comment_url,
+            use_cookie=use_cookie,
+        )
+        if comment_data.get("code") == 0:
+            data = comment_data.setdefault("data", {})
+            data["video"] = video
+            data["root_id"] = root_id
+            data["comment_url"] = comment_url
+        return comment_data
 
     async def fetch_live(self, id_str: str) -> Dict[str, Any]:
         """获取直播间信息"""

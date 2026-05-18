@@ -116,6 +116,31 @@
       }
     }
   },
+  "video_comment": {
+    "type": "object",
+    "description": "视频评论解析",
+    "hint": "控制 B 站视频评论链接的解析行为，链接需要包含 comment_root_id 参数",
+    "items": {
+      "enable": {
+        "description": "启用解析",
+        "hint": "是否解析消息中的视频评论链接",
+        "type": "bool",
+        "default": true
+      },
+      "use_cookie": {
+        "description": "使用 Cookie",
+        "hint": "解析视频评论链接时是否携带已配置的 Bilibili Cookie，默认不携带",
+        "type": "bool",
+        "default": false
+      },
+      "ret_preset": {
+        "description": "回复模板",
+        "hint": "使用 Jinja2 语法的回复内容模板，可引用评论详情接口返回的字段变量",
+        "type": "text",
+        "default": "{{ video.title }}\n{{ root.member.uname }}：{{ root.content.message }}\nUID：{{ root.member.mid }}{% if root.reply_control.location %}｜IP：{{ root.reply_control.location | replace('IP属地：', '') }}{% endif %}\n点赞：{{ root.like | format_number }}｜回复：{{ root.rcount | format_number }}\n{% set child_replies = replies or [] %}{% if child_replies %}回复：\n{% for reply in child_replies[:3] %}- {{ reply.member.uname }}：{{ reply.content.message }}\n  UID：{{ reply.member.mid }}{% if reply.reply_control.location %}｜IP：{{ reply.reply_control.location | replace('IP属地：', '') }}{% endif %}\n{% endfor %}{% endif %}{{ comment_url }}"
+      }
+    }
+  },
   "live": {
     "type": "object",
     "description": "直播解析",

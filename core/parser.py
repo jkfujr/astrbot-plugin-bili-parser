@@ -5,7 +5,8 @@ B站链接提取与解析
 import asyncio
 import json
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from urllib.parse import parse_qs, urlsplit
 
 from astrbot.api import logger
 
@@ -13,20 +14,23 @@ from ..utils import normalize_video_id
 
 
 class Link:
-    def __init__(self, type_: str, id_: str):
+    def __init__(self, type_: str, id_: str, params: Optional[Dict[str, str]] = None):
         self.type = type_
         self.id = id_
+        self.params = params or {}
 
     def __repr__(self):
+        if self.params:
+            return f"Link(type={self.type}, id={self.id}, params={self.params})"
         return f"Link(type={self.type}, id={self.id})"
 
     def __eq__(self, other):
         if isinstance(other, Link):
-            return self.type == other.type and self.id == other.id
+            return self.type == other.type and self.id == other.id and self.params == other.params
         return False
 
     def __hash__(self):
-        return hash((self.type, self.id))
+        return hash((self.type, self.id, tuple(sorted(self.params.items()))))
 
 
 class BiliLinkParser:
@@ -38,6 +42,10 @@ class BiliLinkParser:
     def _compile_regex(self):
         """预编译正则表达式"""
         self.patterns = []
+        self.video_url_pattern = re.compile(
+            r'(?:(?:https?:)?//)?(?:www\.)?bilibili\.com/video/[^\s<>"\']+',
+            re.I
+        )
 
         if self.config.get("video", {}).get("enable", True):
             pattern1 = r'bilibili\.com\/video\/((?<![a-zA-Z0-9])[aA][vV][0-9]+(?![a-zA-Z0-9]))' if self.config.get("video", {}).get("full_url", True) else r'((?<![a-zA-Z0-9])[aA][vV][0-9]+(?![a-zA-Z0-9]))'
@@ -97,12 +105,54 @@ class BiliLinkParser:
         """从纯文本中提取出所有 B站 链接"""
         results = []
         sanitized_content = self._strip_html_tags(content)
+        scan_content = sanitized_content
+
+        if self.config.get("video_comment", {}).get("enable", True):
+            comment_links, scan_content = self._extract_video_comment_links(sanitized_content)
+            results.extend(comment_links)
 
         for item in self.patterns:
-            for match in item["pattern"].finditer(sanitized_content):
+            for match in item["pattern"].finditer(scan_content):
                 results.append(Link(item["type"], match.group(1)))
 
         return self._deduplicate_links(results)
+
+    def _extract_video_comment_links(self, content: str):
+        links = []
+        chars = list(content)
+
+        for match in self.video_url_pattern.finditer(content):
+            link = self._parse_video_comment_url(match.group(0))
+            if not link:
+                continue
+
+            links.append(link)
+            chars[match.start():match.end()] = " " * (match.end() - match.start())
+
+        return links, "".join(chars)
+
+    def _parse_video_comment_url(self, url: str) -> Optional[Link]:
+        parsed_url = url
+        if parsed_url.startswith("//"):
+            parsed_url = "https:" + parsed_url
+        elif not parsed_url.startswith(("http://", "https://")):
+            parsed_url = "https://" + parsed_url
+
+        parsed = urlsplit(parsed_url)
+        path_parts = parsed.path.strip("/").split("/")
+        if len(path_parts) < 2 or path_parts[0].lower() != "video":
+            return None
+
+        video_id = path_parts[1]
+        if not re.match(r'^(?:av\d+|bv1[0-9a-zA-Z]{9})$', video_id, re.I):
+            return None
+
+        root_ids = parse_qs(parsed.query).get("comment_root_id") or []
+        root_id = root_ids[0] if root_ids else ""
+        if not root_id.isdigit():
+            return None
+
+        return Link("VideoComment", video_id, {"root_id": root_id})
 
     def _strip_html_tags(self, content: str) -> str:
         """用线性扫描剥离 HTML 标签，避免正则处理异常长文本。"""
@@ -146,16 +196,10 @@ class BiliLinkParser:
         extracted_urls = []
         self._find_urls_in_json(json_data, extracted_urls, 0)
 
-        # 将提取到的 url 用普通的字符串提取合并
         links = []
         for url in extracted_urls:
-            
-            # 使用现有正则从 url 中提取出 Link 对象，注意这里我们跳过了自身内部的去重
-            sanitized_content = self._strip_html_tags(url)
-            for item in self.patterns:
-                for match in item["pattern"].finditer(sanitized_content):
-                    links.append(Link(item["type"], match.group(1)))
-                    
+            links.extend(self.extract_links(url))
+
         return links
 
     def _find_urls_in_json(self, obj, extracted_urls: List[str], depth: int):

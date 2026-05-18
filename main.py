@@ -56,21 +56,27 @@ class BiliParser(Star):
         
         # 建立类型与抓取方法的映射
         self.fetch_methods = {
-            "Video": self.api_client.fetch_video,
-            "Live": self.api_client.fetch_live,
-            "BangumiEp": self.api_client.fetch_bangumi_ep_ss,
-            "BangumiSs": self.api_client.fetch_bangumi_ep_ss,
-            "BangumiMd": self.api_client.fetch_bangumi_md,
-            "Article": self.api_client.fetch_article,
-            "Opus": self.api_client.fetch_opus,
-            "Space": self.api_client.fetch_space,
-            "Audio": self.api_client.fetch_audio,
-            "AudioMenu": self.api_client.fetch_audio_menu,
+            "Video": lambda link: self.api_client.fetch_video(link.id),
+            "VideoComment": lambda link: self.api_client.fetch_video_comment(
+                link.id,
+                link.params["root_id"],
+                self.config.get("video_comment", {}).get("use_cookie", False),
+            ),
+            "Live": lambda link: self.api_client.fetch_live(link.id),
+            "BangumiEp": lambda link: self.api_client.fetch_bangumi_ep_ss(link.id),
+            "BangumiSs": lambda link: self.api_client.fetch_bangumi_ep_ss(link.id),
+            "BangumiMd": lambda link: self.api_client.fetch_bangumi_md(link.id),
+            "Article": lambda link: self.api_client.fetch_article(link.id),
+            "Opus": lambda link: self.api_client.fetch_opus(link.id),
+            "Space": lambda link: self.api_client.fetch_space(link.id),
+            "Audio": lambda link: self.api_client.fetch_audio(link.id),
+            "AudioMenu": lambda link: self.api_client.fetch_audio_menu(link.id),
         }
 
         # 建立类型与模板配置路径的映射，格式为 (配置节, 配置键)
         self.template_keys = {
             "Video":      ("video",   "ret_preset"),
+            "VideoComment": ("video_comment", "ret_preset"),
             "Live":       ("live",    "ret_preset"),
             "BangumiEp": ("bangumi", "episode_ret_preset"),
             "BangumiSs": ("bangumi", "ret_preset"),
@@ -154,10 +160,13 @@ class BiliParser(Star):
             logger.info(f"[BiliParser][DEBUG] 请求 {link.type} id={link.id}")
 
         try:
-            data = await fetch_func(link.id)
+            data = await fetch_func(link)
         except ValueError as e:
             logger.warning(f"[BiliParser] fetch {link.type} {link.id} 解析失败: {e}")
             return None, f"[解析失败] {link.type} {link.id}：{e}"
+        except KeyError as e:
+            logger.warning(f"[BiliParser] fetch {link.type} {link.id} 参数缺失: {e}")
+            return None, f"[解析失败] {link.type} {link.id}：参数缺失"
 
         if debug:
             logger.info(f"[BiliParser][DEBUG] {link.type} {link.id} 响应 code={data.get('code') if data else None}")
