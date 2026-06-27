@@ -88,6 +88,42 @@
         "hint": "留空为直连。支持 http://、https://、socks4://、socks5://、socks5h://，例如 socks5h://100.100.201.52:10808",
         "type": "string",
         "default": ""
+      },
+      "total_timeout": {
+        "description": "总超时（秒）",
+        "hint": "单次 B站 API 请求的总超时时间，包含连接、代理握手、读取响应等阶段",
+        "type": "float",
+        "default": 10
+      },
+      "connect_timeout": {
+        "description": "连接超时（秒）",
+        "hint": "建立连接或从连接池获取连接的超时时间。代理不稳定时可适当调小，让失败更快暴露",
+        "type": "float",
+        "default": 5
+      },
+      "sock_connect_timeout": {
+        "description": "套接字连接超时（秒）",
+        "hint": "底层 TCP/代理握手连接超时时间。SOCKS5 代理卡住时主要受此项影响",
+        "type": "float",
+        "default": 5
+      },
+      "retry_count": {
+        "description": "失败重试次数",
+        "hint": "网络超时、代理连接失败等临时错误的重试次数。0 表示不重试",
+        "type": "int",
+        "default": 1
+      },
+      "retry_delay": {
+        "description": "重试间隔（秒）",
+        "hint": "两次网络请求重试之间的等待时间",
+        "type": "float",
+        "default": 0.3
+      },
+      "fallback_direct": {
+        "description": "代理失败后直连回退",
+        "hint": "开启后，代理请求失败时会尝试不使用代理重新请求一次。默认关闭，避免绕过你显式配置的代理策略",
+        "type": "bool",
+        "default": false
       }
     }
   },

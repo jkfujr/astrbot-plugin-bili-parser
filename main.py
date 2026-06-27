@@ -14,7 +14,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
 import astrbot.api.message_components as Comp
 
-from .core import BiliAPIClient, CookieManager, BiliLinkParser
+from .core import BiliAPIClient, BiliNetworkError, CookieManager, BiliLinkParser
 from .utils import format_number, format_live_status
 from .utils.remote_image import enable_remote_image_delivery
 
@@ -161,6 +161,12 @@ class BiliParser(Star):
 
         try:
             data = await fetch_func(link)
+        except BiliNetworkError as e:
+            if debug:
+                logger.error(f"[BiliParser] fetch {link.type} {link.id} 网络失败: {e}\n{traceback.format_exc()}")
+            else:
+                logger.warning(f"[BiliParser] fetch {link.type} {link.id} 网络失败: {e}")
+            return None, f"[解析失败] {link.type} {link.id}：{e}"
         except ValueError as e:
             logger.warning(f"[BiliParser] fetch {link.type} {link.id} 解析失败: {e}")
             return None, f"[解析失败] {link.type} {link.id}：{e}"

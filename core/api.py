@@ -72,6 +72,23 @@ def _add_dm_params(params: dict) -> dict:
 # ==================== API 客户端 ====================
 
 
+class BiliNetworkError(Exception):
+    """B站网络请求失败，包含面向用户的简短错误信息。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        url: str,
+        proxy_url: str = "",
+        cause: Optional[BaseException] = None,
+    ):
+        super().__init__(message)
+        self.url = url
+        self.proxy_url = proxy_url
+        self.cause = cause
+
+
 class BiliAPIClient:
     """B站 API 客户端"""
 
@@ -84,6 +101,12 @@ class BiliAPIClient:
         self._user_agent = user_agent
         self._cookie = cookie_manager
         self._proxy_url = network_config.get("proxy_url", "").strip()
+        self._total_timeout = self._get_positive_number(network_config, "total_timeout", 10)
+        self._connect_timeout = self._get_positive_number(network_config, "connect_timeout", 5)
+        self._sock_connect_timeout = self._get_positive_number(network_config, "sock_connect_timeout", 5)
+        self._retry_count = self._get_non_negative_int(network_config, "retry_count", 1)
+        self._retry_delay = self._get_non_negative_number(network_config, "retry_delay", 0.3)
+        self._fallback_direct = bool(network_config.get("fallback_direct", False))
         self._session: Optional[aiohttp.ClientSession] = None
         self._session_lock = asyncio.Lock()
         # Wbi mixin key 缓存
@@ -92,10 +115,36 @@ class BiliAPIClient:
         self._wbi_retry_after: float = 0
         self._wbi_lock = asyncio.Lock()
 
-    def _create_session(self) -> aiohttp.ClientSession:
+    def _get_positive_number(self, config: Dict[str, Any], key: str, default: float) -> float:
+        value = config.get(key, default)
+        if not isinstance(value, bool) and isinstance(value, (int, float)) and value > 0:
+            return float(value)
+        return float(default)
+
+    def _get_non_negative_number(self, config: Dict[str, Any], key: str, default: float) -> float:
+        value = config.get(key, default)
+        if not isinstance(value, bool) and isinstance(value, (int, float)) and value >= 0:
+            return float(value)
+        return float(default)
+
+    def _get_non_negative_int(self, config: Dict[str, Any], key: str, default: int) -> int:
+        value = config.get(key, default)
+        if not isinstance(value, bool) and isinstance(value, int) and value >= 0:
+            return value
+        return default
+
+    def _build_timeout(self) -> aiohttp.ClientTimeout:
+        return aiohttp.ClientTimeout(
+            total=self._total_timeout,
+            connect=self._connect_timeout,
+            sock_connect=self._sock_connect_timeout,
+            sock_read=self._total_timeout,
+        )
+
+    def _create_session(self, *, use_proxy: bool = True) -> aiohttp.ClientSession:
         """创建 HTTP 会话，按配置统一接入代理"""
-        kwargs: Dict[str, Any] = {"timeout": aiohttp.ClientTimeout(total=10)}
-        if self._proxy_url:
+        kwargs: Dict[str, Any] = {"timeout": self._build_timeout()}
+        if use_proxy and self._proxy_url:
             proxy_url = self._proxy_url
             proxy_url_lower = proxy_url.lower()
             if proxy_url_lower.startswith("socks5h://"):
@@ -147,6 +196,13 @@ class BiliAPIClient:
 
     # ---- Wbi 签名 ----
 
+    async def _fetch_wbi_nav(self, nav_url: str) -> Dict[str, Any]:
+        return await self._request_json(
+            "GET",
+            nav_url,
+            headers=self._build_headers(),
+        )
+
     async def _get_wbi_mixin_key(self) -> str:
         """获取 Wbi mixin key（带缓存，每 30 分钟刷新一次）"""
         now = time.time()
@@ -162,29 +218,31 @@ class BiliAPIClient:
             if now < self._wbi_retry_after:
                 return ""
 
-            # 请求导航接口获取 wbi_img
-            session = await self._require_session()
             nav_url = "https://api.bilibili.com/x/web-interface/nav"
             try:
-                async with session.get(nav_url, headers=self._build_headers()) as resp:
-                    data = await resp.json()
-                    data_dict = data.get("data") or {}
-                    wbi_img = data_dict.get("wbi_img") or {}
-                    img_url = wbi_img.get("img_url", "")
-                    sub_url = wbi_img.get("sub_url", "")
-                    # 从 URL 中提取文件名（不含扩展名）作为 key
-                    img_key = img_url.rsplit("/", 1)[-1].split(".")[0] if img_url else ""
-                    sub_key = sub_url.rsplit("/", 1)[-1].split(".")[0] if sub_url else ""
-                    if not img_key or not sub_key:
-                        self._wbi_mixin_key = ""
-                        self._wbi_key_expire = 0
-                        self._wbi_retry_after = now + 60
-                        logger.warning("[BiliParser] 获取 Wbi mixin key 失败: nav 接口未返回有效 wbi_img")
-                        return ""
-                    self._wbi_mixin_key = _calc_mixin_key(img_key, sub_key)
-                    self._wbi_key_expire = now + 1800  # 缓存 30 分钟
-                    self._wbi_retry_after = 0
-                    logger.info(f"[BiliParser] 已获取 Wbi mixin key: {self._wbi_mixin_key[:8]}...")
+                data = await self._fetch_wbi_nav(nav_url)
+                data_dict = data.get("data") or {}
+                wbi_img = data_dict.get("wbi_img") or {}
+                img_url = wbi_img.get("img_url", "")
+                sub_url = wbi_img.get("sub_url", "")
+                # 从 URL 中提取文件名（不含扩展名）作为 key
+                img_key = img_url.rsplit("/", 1)[-1].split(".")[0] if img_url else ""
+                sub_key = sub_url.rsplit("/", 1)[-1].split(".")[0] if sub_url else ""
+                if not img_key or not sub_key:
+                    self._wbi_mixin_key = ""
+                    self._wbi_key_expire = 0
+                    self._wbi_retry_after = now + 60
+                    logger.warning("[BiliParser] 获取 Wbi mixin key 失败: nav 接口未返回有效 wbi_img")
+                    return ""
+                self._wbi_mixin_key = _calc_mixin_key(img_key, sub_key)
+                self._wbi_key_expire = now + 1800  # 缓存 30 分钟
+                self._wbi_retry_after = 0
+                logger.info(f"[BiliParser] 已获取 Wbi mixin key: {self._wbi_mixin_key[:8]}...")
+            except BiliNetworkError as e:
+                logger.warning(f"[BiliParser] 获取 Wbi mixin key 失败: {e}")
+                self._wbi_mixin_key = ""
+                self._wbi_key_expire = 0
+                self._wbi_retry_after = now + 60
             except Exception as e:
                 logger.error(f"[BiliParser] 获取 Wbi mixin key 失败: {e}")
                 self._wbi_mixin_key = ""
@@ -195,6 +253,146 @@ class BiliAPIClient:
 
     # ---- HTTP 请求方法 ----
 
+    def _network_error_text(self, error: BaseException) -> str:
+        error_type = type(error).__name__
+        if isinstance(error, (asyncio.TimeoutError, TimeoutError)):
+            return "B站请求超时，请检查插件代理配置或网络连通性。"
+        if isinstance(error, aiohttp.ClientProxyConnectionError):
+            return "B站代理连接失败，请检查插件代理地址是否可用。"
+        if isinstance(error, aiohttp.ClientConnectorError):
+            return "B站连接失败，请检查插件代理配置或网络连通性。"
+        if isinstance(error, aiohttp.ClientError):
+            return f"B站网络请求失败（{error_type}），请检查插件代理配置。"
+        if isinstance(error, OSError):
+            return f"B站网络连接失败（{error_type}），请检查网络连通性。"
+        return f"B站请求失败（{error_type}）。"
+
+    def _log_network_error(self, url: str, error: BaseException, attempt: int, max_attempts: int, use_proxy: bool):
+        proxy_text = self._proxy_url if use_proxy and self._proxy_url else "直连"
+        logger.warning(
+            f"[BiliParser] 网络请求失败 {url}，方式={proxy_text}，"
+            f"尝试={attempt}/{max_attempts}，异常={type(error).__name__}: {error}"
+        )
+
+    async def _request_json_once(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Optional[dict] = None,
+        headers: Optional[dict] = None,
+        allow_redirects: bool = True,
+        use_proxy: bool = True,
+    ) -> Dict[str, Any]:
+        session = await self._require_session() if use_proxy else self._create_session(use_proxy=False)
+        try:
+            async with session.request(
+                method,
+                url,
+                params=params,
+                headers=headers,
+                allow_redirects=allow_redirects,
+            ) as resp:
+                resp.raise_for_status()
+                return await resp.json()
+        finally:
+            if not use_proxy:
+                await session.close()
+
+    async def _request_url_once(
+        self,
+        method: str,
+        url: str,
+        *,
+        allow_redirects: bool = True,
+        use_proxy: bool = True,
+    ) -> str:
+        session = await self._require_session() if use_proxy else self._create_session(use_proxy=False)
+        try:
+            async with session.request(method, url, allow_redirects=allow_redirects) as resp:
+                return str(resp.url)
+        finally:
+            if not use_proxy:
+                await session.close()
+
+    async def _request_json(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Optional[dict] = None,
+        headers: Optional[dict] = None,
+        allow_redirects: bool = True,
+    ) -> Dict[str, Any]:
+        max_attempts = self._retry_count + 1
+        last_error: Optional[BaseException] = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await self._request_json_once(
+                    method,
+                    url,
+                    params=params,
+                    headers=headers,
+                    allow_redirects=allow_redirects,
+                    use_proxy=True,
+                )
+            except (asyncio.TimeoutError, TimeoutError, aiohttp.ClientError, OSError) as e:
+                last_error = e
+                self._log_network_error(url, e, attempt, max_attempts, True)
+                if attempt < max_attempts and self._retry_delay > 0:
+                    await asyncio.sleep(self._retry_delay)
+
+        if self._fallback_direct and self._proxy_url:
+            logger.warning(f"[BiliParser] 代理请求失败，尝试直连回退: {url}")
+            try:
+                return await self._request_json_once(
+                    method,
+                    url,
+                    params=params,
+                    headers=headers,
+                    allow_redirects=allow_redirects,
+                    use_proxy=False,
+                )
+            except (asyncio.TimeoutError, TimeoutError, aiohttp.ClientError, OSError) as e:
+                last_error = e
+                self._log_network_error(url, e, 1, 1, False)
+
+        message = self._network_error_text(last_error) if last_error else "B站网络请求失败。"
+        raise BiliNetworkError(message, url=url, proxy_url=self._proxy_url, cause=last_error)
+
+    async def _request_url(self, method: str, url: str, *, allow_redirects: bool = True) -> str:
+        max_attempts = self._retry_count + 1
+        last_error: Optional[BaseException] = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await self._request_url_once(
+                    method,
+                    url,
+                    allow_redirects=allow_redirects,
+                    use_proxy=True,
+                )
+            except (asyncio.TimeoutError, TimeoutError, aiohttp.ClientError, OSError) as e:
+                last_error = e
+                self._log_network_error(url, e, attempt, max_attempts, True)
+                if attempt < max_attempts and self._retry_delay > 0:
+                    await asyncio.sleep(self._retry_delay)
+
+        if self._fallback_direct and self._proxy_url:
+            logger.warning(f"[BiliParser] 代理请求失败，尝试直连回退: {url}")
+            try:
+                return await self._request_url_once(
+                    method,
+                    url,
+                    allow_redirects=allow_redirects,
+                    use_proxy=False,
+                )
+            except (asyncio.TimeoutError, TimeoutError, aiohttp.ClientError, OSError) as e:
+                last_error = e
+                self._log_network_error(url, e, 1, 1, False)
+
+        message = self._network_error_text(last_error) if last_error else "B站网络请求失败。"
+        raise BiliNetworkError(message, url=url, proxy_url=self._proxy_url, cause=last_error)
+
     async def _get(
         self,
         url: str,
@@ -203,14 +401,12 @@ class BiliAPIClient:
         use_cookie: bool = True,
     ) -> Dict[str, Any]:
         """普通 GET 请求"""
-        session = await self._require_session()
-        try:
-            async with session.get(url, params=params, headers=self._build_headers(referer, use_cookie)) as resp:
-                resp.raise_for_status()
-                return await resp.json()
-        except Exception as e:
-            logger.error(f"[BiliParser] 请求失败 {url}: {e}")
-            raise
+        return await self._request_json(
+            "GET",
+            url,
+            params=params,
+            headers=self._build_headers(referer, use_cookie),
+        )
 
     async def _get_with_wbi(self, url: str, params: dict) -> Dict[str, Any]:
         """带 Wbi 签名 + 设备指纹的 GET 请求"""
@@ -219,14 +415,12 @@ class BiliAPIClient:
             params = _add_dm_params(params)
             params = _sign_wbi_params(params, mixin_key)
 
-        session = await self._require_session()
-        try:
-            async with session.get(url, params=params, headers=self._build_headers()) as resp:
-                resp.raise_for_status()
-                return await resp.json()
-        except Exception as e:
-            logger.error(f"[BiliParser] Wbi 请求失败 {url}: {e}")
-            raise
+        return await self._request_json(
+            "GET",
+            url,
+            params=params,
+            headers=self._build_headers(),
+        )
 
     # ---- 各类型资源 API ----
 
@@ -370,9 +564,8 @@ class BiliAPIClient:
     async def get_short_redir_url(self, short_id: str) -> str:
         """获取短链接跳转真实地址"""
         url = f"https://b23.tv/{short_id}"
-        session = await self._require_session()
         try:
-            async with session.head(url, allow_redirects=True) as resp:
-                return str(resp.url)
-        except Exception:
+            return await self._request_url("HEAD", url, allow_redirects=True)
+        except BiliNetworkError as e:
+            logger.warning(f"[BiliParser] 短链接解析失败 {url}: {e}")
             return ""
