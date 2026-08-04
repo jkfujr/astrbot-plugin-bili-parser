@@ -5,10 +5,8 @@ B站链接提取与解析
 import asyncio
 import json
 import re
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlsplit
-
-from astrbot.api import logger
 
 from ..utils import normalize_video_id
 
@@ -41,51 +39,141 @@ class BiliLinkParser:
 
     def _compile_regex(self):
         """预编译正则表达式"""
-        self.patterns = []
         self.video_url_pattern = re.compile(
             r'(?:(?:https?:)?//)?(?:www\.)?bilibili\.com/video/[^\s<>"\']+',
             re.I
         )
+        self.card_video_url_pattern = re.compile(
+            r'(?:(?:https?:)?//)(?:www\.)?bilibili\.com/video/[^\s<>"\']+',
+            re.I
+        )
+
+        self.text_patterns = self._build_patterns(force_full_url=False)
+        self.card_patterns = self._build_patterns(force_full_url=True)
+
+    def _build_patterns(self, force_full_url: bool):
+        patterns = []
+        bili_prefix = (
+            r'(?:(?:https?:)?//)(?:www\.)?bilibili\.com'
+            if force_full_url else r'bilibili\.com'
+        )
+        live_prefix = (
+            r'(?:(?:https?:)?//)live\.bilibili\.com'
+            if force_full_url else r'live\.bilibili\.com'
+        )
+        space_prefix = (
+            r'(?:(?:https?:)?//)space\.bilibili\.com'
+            if force_full_url else r'space\.bilibili\.com'
+        )
+        short_prefix = r'(?:(?:https?:)?//)' if force_full_url else ''
+
+        def use_full_url(section: str) -> bool:
+            return force_full_url or self.config.get(section, {}).get(
+                "full_url",
+                True,
+            )
 
         if self.config.get("video", {}).get("enable", True):
-            pattern1 = r'bilibili\.com\/video\/((?<![a-zA-Z0-9])[aA][vV][0-9]+(?![a-zA-Z0-9]))' if self.config.get("video", {}).get("full_url", True) else r'((?<![a-zA-Z0-9])[aA][vV][0-9]+(?![a-zA-Z0-9]))'
-            pattern2 = r'bilibili\.com\/video\/((?<![a-zA-Z0-9])[bB][vV]1[0-9a-zA-Z]{9}(?![a-zA-Z0-9]))' if self.config.get("video", {}).get("full_url", True) else r'((?<![a-zA-Z0-9])[bB][vV]1[0-9a-zA-Z]{9}(?![a-zA-Z0-9]))'
-            self.patterns.append({"pattern": re.compile(pattern1, re.I), "type": "Video"})
-            self.patterns.append({"pattern": re.compile(pattern2, re.I), "type": "Video"})
+            if use_full_url("video"):
+                pattern1 = (
+                    bili_prefix
+                    + r'\/video\/((?<![a-zA-Z0-9])[aA][vV][0-9]+(?![a-zA-Z0-9]))'
+                )
+                pattern2 = (
+                    bili_prefix
+                    + r'\/video\/((?<![a-zA-Z0-9])[bB][vV]1[0-9a-zA-Z]{9}(?![a-zA-Z0-9]))'
+                )
+            else:
+                pattern1 = r'((?<![a-zA-Z0-9])[aA][vV][0-9]+(?![a-zA-Z0-9]))'
+                pattern2 = r'((?<![a-zA-Z0-9])[bB][vV]1[0-9a-zA-Z]{9}(?![a-zA-Z0-9]))'
+            patterns.append({"pattern": re.compile(pattern1, re.I), "type": "Video"})
+            patterns.append({"pattern": re.compile(pattern2, re.I), "type": "Video"})
 
         if self.config.get("live", {}).get("enable", True):
-            self.patterns.append({"pattern": re.compile(r'live\.bilibili\.com(?:\/h5)?\/(\d+)', re.I), "type": "Live"})
+            patterns.append({
+                "pattern": re.compile(live_prefix + r'(?:\/h5)?\/(\d+)', re.I),
+                "type": "Live",
+            })
 
         if self.config.get("bangumi", {}).get("enable", True):
-            p1 = r'bilibili\.com\/bangumi\/play\/(ep\d+)(?![a-zA-Z0-9])' if self.config.get("bangumi", {}).get("full_url", True) else r'(?<![a-zA-Z0-9])(ep\d+)(?![a-zA-Z0-9])'
-            p2 = r'bilibili\.com\/bangumi\/play\/(ss\d+)(?![a-zA-Z0-9])' if self.config.get("bangumi", {}).get("full_url", True) else r'(?<![a-zA-Z0-9])(ss\d+)(?![a-zA-Z0-9])'
-            p3 = r'bilibili\.com\/bangumi\/media\/(md\d+)(?![a-zA-Z0-9])' if self.config.get("bangumi", {}).get("full_url", True) else r'(?<![a-zA-Z0-9])(md\d+)(?![a-zA-Z0-9])'
-            self.patterns.append({"pattern": re.compile(p1, re.I), "type": "BangumiEp"})
-            self.patterns.append({"pattern": re.compile(p2, re.I), "type": "BangumiSs"})
-            self.patterns.append({"pattern": re.compile(p3, re.I), "type": "BangumiMd"})
+            if use_full_url("bangumi"):
+                p1 = bili_prefix + r'\/bangumi\/play\/(ep\d+)(?![a-zA-Z0-9])'
+                p2 = bili_prefix + r'\/bangumi\/play\/(ss\d+)(?![a-zA-Z0-9])'
+                p3 = bili_prefix + r'\/bangumi\/media\/(md\d+)(?![a-zA-Z0-9])'
+            else:
+                p1 = r'(?<![a-zA-Z0-9])(ep\d+)(?![a-zA-Z0-9])'
+                p2 = r'(?<![a-zA-Z0-9])(ss\d+)(?![a-zA-Z0-9])'
+                p3 = r'(?<![a-zA-Z0-9])(md\d+)(?![a-zA-Z0-9])'
+            patterns.append({"pattern": re.compile(p1, re.I), "type": "BangumiEp"})
+            patterns.append({"pattern": re.compile(p2, re.I), "type": "BangumiSs"})
+            patterns.append({"pattern": re.compile(p3, re.I), "type": "BangumiMd"})
 
         if self.config.get("space", {}).get("enable", True):
-            self.patterns.append({"pattern": re.compile(r'space\.bilibili\.com\/(\d+)', re.I), "type": "Space"})
-            self.patterns.append({"pattern": re.compile(r'bilibili\.com\/space\/(\d+)', re.I), "type": "Space"})
+            patterns.append({
+                "pattern": re.compile(space_prefix + r'\/(\d+)', re.I),
+                "type": "Space",
+            })
+            patterns.append({
+                "pattern": re.compile(bili_prefix + r'\/space\/(\d+)', re.I),
+                "type": "Space",
+            })
 
         if self.config.get("opus", {}).get("enable", True):
-            self.patterns.append({"pattern": re.compile(r'bilibili\.com\/opus\/(\d+)', re.I), "type": "Opus"})
+            patterns.append({
+                "pattern": re.compile(bili_prefix + r'\/opus\/(\d+)', re.I),
+                "type": "Opus",
+            })
 
         if self.config.get("article", {}).get("enable", True):
-            pattern = r'bilibili\.com\/read\/cv(\d+)(?![a-zA-Z0-9])' if self.config.get("article", {}).get("full_url", True) else r'(?<![a-zA-Z0-9])cv(\d+)(?![a-zA-Z0-9])'
-            self.patterns.append({"pattern": re.compile(pattern, re.I), "type": "Article"})
-            self.patterns.append({"pattern": re.compile(r'bilibili\.com\/read\/mobile(?:\?id=|\/)(\d+)(?![a-zA-Z0-9])', re.I), "type": "Article"})
+            pattern = (
+                bili_prefix + r'\/read\/cv(\d+)(?![a-zA-Z0-9])'
+                if use_full_url("article")
+                else r'(?<![a-zA-Z0-9])cv(\d+)(?![a-zA-Z0-9])'
+            )
+            patterns.append({"pattern": re.compile(pattern, re.I), "type": "Article"})
+            patterns.append({
+                "pattern": re.compile(
+                    bili_prefix
+                    + r'\/read\/mobile(?:\?id=|\/)(\d+)(?![a-zA-Z0-9])',
+                    re.I,
+                ),
+                "type": "Article",
+            })
 
         if self.config.get("audio", {}).get("enable", True):
-            pattern = r'bilibili\.com\/audio\/au(\d+)(?![a-zA-Z0-9])' if self.config.get("audio", {}).get("full_url", True) else r'(?<![a-zA-Z0-9])au(\d+)(?![a-zA-Z0-9])'
-            self.patterns.append({"pattern": re.compile(pattern, re.I), "type": "Audio"})
+            pattern = (
+                bili_prefix + r'\/audio\/au(\d+)(?![a-zA-Z0-9])'
+                if use_full_url("audio")
+                else r'(?<![a-zA-Z0-9])au(\d+)(?![a-zA-Z0-9])'
+            )
+            patterns.append({"pattern": re.compile(pattern, re.I), "type": "Audio"})
 
-            pattern = r'bilibili\.com\/audio\/am(\d+)(?![a-zA-Z0-9])' if self.config.get("audio", {}).get("full_url", True) else r'(?<![a-zA-Z0-9])am(\d+)(?![a-zA-Z0-9])'
-            self.patterns.append({"pattern": re.compile(pattern, re.I), "type": "AudioMenu"})
+            pattern = (
+                bili_prefix + r'\/audio\/am(\d+)(?![a-zA-Z0-9])'
+                if use_full_url("audio")
+                else r'(?<![a-zA-Z0-9])am(\d+)(?![a-zA-Z0-9])'
+            )
+            patterns.append({"pattern": re.compile(pattern, re.I), "type": "AudioMenu"})
 
         if self.config.get("short_link", {}).get("enable", True):
-            self.patterns.append({"pattern": re.compile(r'b23\.tv(?:\\)?\/([0-9a-zA-Z]+)(?![a-zA-Z0-9])', re.I), "type": "Short"})
-            self.patterns.append({"pattern": re.compile(r'bili(?:22|23|33)\.cn\/([0-9a-zA-Z]+)(?![a-zA-Z0-9])', re.I), "type": "Short"})
+            patterns.append({
+                "pattern": re.compile(
+                    short_prefix
+                    + r'b23\.tv(?:\\)?\/([0-9a-zA-Z]+)(?![a-zA-Z0-9])',
+                    re.I,
+                ),
+                "type": "Short",
+            })
+            patterns.append({
+                "pattern": re.compile(
+                    short_prefix
+                    + r'bili(?:22|23|33)\.cn\/([0-9a-zA-Z]+)(?![a-zA-Z0-9])',
+                    re.I,
+                ),
+                "type": "Short",
+            })
+
+        return patterns
 
     def _deduplicate_links(self, links: List[Link]) -> List[Link]:
         """对提取出的链接列表去重；同一视频有评论链接时，丢弃普通视频链接。"""
@@ -117,25 +205,40 @@ class BiliLinkParser:
 
     def extract_links(self, content: str) -> List[Link]:
         """从纯文本中提取出所有 B站 链接"""
+        return self._extract_content_links(
+            content,
+            self.text_patterns,
+            self.video_url_pattern,
+        )
+
+    def _extract_content_links(
+        self,
+        content: str,
+        patterns,
+        video_url_pattern,
+    ) -> List[Link]:
         results = []
         sanitized_content = self._strip_html_tags(content)
         scan_content = sanitized_content
 
         if self.config.get("video_comment", {}).get("enable", True):
-            comment_links, scan_content = self._extract_video_comment_links(sanitized_content)
+            comment_links, scan_content = self._extract_video_comment_links(
+                sanitized_content,
+                video_url_pattern,
+            )
             results.extend(comment_links)
 
-        for item in self.patterns:
+        for item in patterns:
             for match in item["pattern"].finditer(scan_content):
                 results.append(Link(item["type"], match.group(1)))
 
         return self._deduplicate_links(results)
 
-    def _extract_video_comment_links(self, content: str):
+    def _extract_video_comment_links(self, content: str, video_url_pattern):
         links = []
         chars = list(content)
 
-        for match in self.video_url_pattern.finditer(content):
+        for match in video_url_pattern.finditer(content):
             link = self._parse_video_comment_url(match.group(0))
             if not link:
                 continue
@@ -205,42 +308,49 @@ class BiliLinkParser:
             pos += 1
         return -1
 
-    def extract_from_json(self, json_data: dict) -> List[Link]:
-        """从 QQ 小程序等 JSON 卡片中提取 B站 链接"""
-        extracted_urls = []
-        self._find_urls_in_json(json_data, extracted_urls, 0)
-
+    def extract_card_links(self, payload: Any) -> List[Link]:
+        """从规范化的 JSON 卡片数据中提取完整 B 站链接。"""
         links = []
-        for url in extracted_urls:
-            links.extend(self.extract_links(url))
-
+        for value in self._iter_card_values(payload):
+            links.extend(self._extract_content_links(
+                value,
+                self.card_patterns,
+                self.card_video_url_pattern,
+            ))
         return self._deduplicate_links(links)
 
-    def _find_urls_in_json(self, obj, extracted_urls: List[str], depth: int):
-        if depth > self.max_json_depth:
-            return
+    def _iter_card_values(self, payload: Any):
+        stack = [(payload, 0)]
+        while stack:
+            value, depth = stack.pop()
+            if depth > self.max_json_depth:
+                continue
+            if isinstance(value, dict):
+                stack.extend((item, depth + 1) for item in value.values())
+                continue
+            if isinstance(value, list):
+                stack.extend((item, depth + 1) for item in value)
+                continue
+            if not isinstance(value, str):
+                continue
 
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                if isinstance(v, str):
-                    if k in ("qqdocurl", "url", "jumpUrl") or re.match(r'^https?://(b23\.tv|www\.bilibili\.com|bili22\.cn)', v):
-                        extracted_urls.append(v)
-                    else:
-                        # Napcat/OneBot 给到的 JSON 内可能嵌套被直接 Stringify 的 JSON 文本（如 data="{\"ver...}"）
-                        v_stripped = v.strip()
-                        if v_stripped.startswith('{') or v_stripped.startswith('['):
-                            try:
-                                parsed_v = json.loads(v_stripped)
-                                self._find_urls_in_json(parsed_v, extracted_urls, depth + 1)
-                            except json.JSONDecodeError as e:
-                                if self.config.get("basic", {}).get("debug_mode", False):
-                                    snippet = v_stripped[:120].replace("\n", "\\n")
-                                    logger.warning(f"[BiliParser] JSON 卡片嵌套字符串解析失败: {e}; content={snippet}")
+            if depth >= self.max_json_depth:
+                yield value
+                continue
+
+            stripped = value.strip()
+            if stripped.startswith(("{", "[")):
+                try:
+                    nested = json.loads(stripped)
+                except json.JSONDecodeError:
+                    pass
                 else:
-                    self._find_urls_in_json(v, extracted_urls, depth + 1)
-        elif isinstance(obj, list):
-            for item in obj:
-                self._find_urls_in_json(item, extracted_urls, depth + 1)
+                    if isinstance(nested, (dict, list)):
+                        stack.append((nested, depth + 1))
+                        continue
+
+            if value:
+                yield value
 
     async def resolve_short_links(self, links: List[Link], api_client) -> List[Link]:
         """将提取出来的短链接转换为真实链接并递归提取 (并发解析)"""
@@ -252,7 +362,11 @@ class BiliLinkParser:
             if link.type == "Short":
                 redir_url = await api_client.get_short_redir_url(link.id)
                 if redir_url:
-                    resolved = self.extract_links(redir_url)
+                    resolved = self._extract_content_links(
+                        redir_url,
+                        self.card_patterns,
+                        self.card_video_url_pattern,
+                    )
                     final_resolved = []
                     for r_link in resolved:
                         if r_link.type == "Short":

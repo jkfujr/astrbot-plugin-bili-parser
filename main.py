@@ -105,14 +105,14 @@ class BiliParser(Star):
         message_str = event.message_str
         extra_links = []
 
-        if self.config.get("json_card", {}).get("enable", True) and hasattr(event.message_obj, "raw_message"):
-            try:
-                raw_message = event.message_obj.raw_message
-                if debug:
-                    logger.info(f"[BiliParser][DEBUG] json_card 开启，探测 raw_message，内容长度: {len(str(raw_message))}")
-                extra_links.extend(self.parser.extract_from_json(raw_message))
-            except Exception as e:
-                logger.error(f"[BiliParser] 从 raw_message 中提取 json 发生异常: {e}")
+        if self.config.get("json_card", {}).get("enable", True):
+            for component in event.get_messages():
+                if not isinstance(component, Comp.Json):
+                    continue
+                try:
+                    extra_links.extend(self.parser.extract_card_links(component.data))
+                except Exception as e:
+                    logger.error(f"[BiliParser] extract_card_links 异常: {e}")
 
         if not message_str and not extra_links:
             return []
